@@ -62,7 +62,6 @@ from config.constants import (
     LLM_MODEL,
     USER_AWAY_TIMEOUT_SECS,
     CALL_TYPE_REMINDER,
-    THINKING_AUDIO_VOLUME,
 )
 
 # ── Agent map for TEST_AGENT selection ──────────────────────────────────────
@@ -240,17 +239,16 @@ async def entrypoint(ctx: JobContext) -> None:
         except Exception as e:
             logger.warning("log_call_end failed", extra={"error": str(e)})
         finally:
+            await background_audio.aclose()
             await close_pool(db_pool)
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    # ── 10. Background audio — keyboard typing during tool calls ────────────
-    # background_audio = BackgroundAudioPlayer(
-    #     thinking_sound=[
-    #         AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING, volume=THINKING_AUDIO_VOLUME),
-    #         AudioConfig(BuiltinAudioClip.KEYBOARD_TYPING2, volume=0.5),
-    #     ],
-    # )
+    # ── 10. Background audio — office ambience for entire call ──────────────
+    background_audio = BackgroundAudioPlayer(
+        ambient_sound=BuiltinAudioClip.OFFICE_AMBIENCE,
+        stream_timeout_ms=2000
+    )
 
     # ── 11. Start session ───────────────────────────────────────────────────
     starting_agent = AgentClass()
@@ -261,7 +259,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     await session.start(agent=starting_agent, room=ctx.room)
     session.output.set_audio_enabled(True)
-    # await background_audio.start(room=ctx.room, agent_session=session)
+    await background_audio.start(room=ctx.room, agent_session=session)
 
     logger.info(
         "session started",
