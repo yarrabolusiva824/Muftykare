@@ -42,6 +42,7 @@ from livekit.plugins import openai as lk_openai
 from userdata import MuftyKareUserData
 from db.connection import create_pool, close_pool
 from db.queries import log_call_start, log_call_end
+from audio_cache import looping_cached_audio, warm_ambience_cache
 from agents import (
     GreeterAgent,
     BookingAgent,
@@ -246,8 +247,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # ── 10. Background audio — office ambience for entire call ──────────────
     background_audio = BackgroundAudioPlayer(
-        ambient_sound=BuiltinAudioClip.OFFICE_AMBIENCE,
-        stream_timeout_ms=2000
+        ambient_sound=looping_cached_audio(BuiltinAudioClip.OFFICE_AMBIENCE.path()),
     )
 
     # ── 11. Start session ───────────────────────────────────────────────────
@@ -259,6 +259,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     await session.start(agent=starting_agent, room=ctx.room)
     session.output.set_audio_enabled(True)
+    await warm_ambience_cache(BuiltinAudioClip.OFFICE_AMBIENCE.path())
     await background_audio.start(room=ctx.room, agent_session=session)
 
     logger.info(
