@@ -27,3 +27,21 @@ async def looping_cached_audio(file_path: str):
 async def warm_ambience_cache(file_path: str) -> None:
     """Decode and cache the file ahead of time so playback never blocks on it."""
     await _get_cached_frames(file_path)
+
+
+async def make_ambient_generator(file_path: str):
+    """
+    Decode audio into memory, return an infinite in-memory async generator.
+    The returned generator has ZERO awaits inside — pure list iteration only.
+    Decode happens here, before the generator is created.
+    """
+    frames = await _get_cached_frames(file_path)
+
+    async def _loop():
+        if not frames:
+            return
+        while True:
+            for frame in frames:
+                yield frame
+
+    return _loop()
