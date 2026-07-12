@@ -15,4 +15,4 @@ venv/
 .venv/
 
 # DB migration artifact
-muftycare.db
+# muftycare.db
