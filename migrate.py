@@ -9,14 +9,23 @@ import asyncpg
 from datetime import datetime
 
 # ── Config ────────────────────────────────────────────────────────────────────
-SQLITE_PATH = r"C:\Users\yaswanth.k\Downloads\muftycare.db"
+# SQLITE_PATH = r"C:\Users\yaswanth.k\Downloads\muftycare.db"
+SQLITE_PATH = "/var/www/muftykare-voice-agents/muftykarevoiceagents/muftycare.db"
+
+# PG_CONFIG = dict(
+#     host="localhost",
+#     port=5432,
+#     user="muftykare",
+#     password="muftykare@123",
+#     database="muftykare",
+# )
 
 PG_CONFIG = dict(
     host="localhost",
     port=5432,
-    user="muftykare",
-    password="muftykare@123",
-    database="muftykare",
+    user="muftykare_voice_user",
+    password="Ya@9703981489",
+    database="muftykare_voice",
 )
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
