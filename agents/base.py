@@ -120,24 +120,43 @@ class MuftyKareBaseAgent(Agent):
         """
         userdata = context.userdata
         logger.info(
-            "agent:warm_transfer initiated",
+            "Warm transfer: Initiating human escalation sequence.",
             extra={
                 "customer_id": userdata.customer_id,
+                "customer_name": userdata.customer_name,
+                "caller_phone": userdata.caller_phone,
+                "call_id": userdata.call_id,
+                "call_log_id": userdata.call_log_id,
                 "intent": userdata.intent,
+                "complaint_type": userdata.complaint_type,
                 "complaint_severity": userdata.complaint_severity,
+                "current_agent": self.__class__.__name__,
             },
         )
 
+        logger.info("Warm transfer: Playing hold announcement to customer...")
         # Announce hold — must not be interrupted
         await self.session.say(
             "ఒక్క నిమిషం hold లో ఉండండి, మా manager మీతో మాట్లాడతారు.",
             allow_interruptions=False,
         )
+        logger.info("Warm transfer: Hold announcement completed successfully.")
+
+        logger.info(
+            "Warm transfer: Checking configuration variables...",
+            extra={
+                "MANAGER_PHONE": MANAGER_PHONE,
+                "SIP_OUTBOUND_TRUNK_ID": SIP_OUTBOUND_TRUNK_ID,
+            }
+        )
 
         if not SIP_OUTBOUND_TRUNK_ID or not MANAGER_PHONE:
             logger.warning(
-                "agent:warm_transfer — SIP_OUTBOUND_TRUNK_ID or MANAGER_PHONE not set. "
-                "Cannot initiate warm transfer in dev mode."
+                "Warm transfer: Escalation canceled. Missing SIP trunk ID or Manager phone configuration.",
+                extra={
+                    "SIP_OUTBOUND_TRUNK_ID": SIP_OUTBOUND_TRUNK_ID,
+                    "MANAGER_PHONE": MANAGER_PHONE,
+                }
             )
             await self.session.say(
                 "క్షమించండి, ప్రస్తుతం మా manager available గా లేరు. "
@@ -145,7 +164,18 @@ class MuftyKareBaseAgent(Agent):
             )
             return
 
+        logger.info(
+            f"Warm transfer: Invoking WarmTransferTask via LiveKit. Connecting caller to manager phone '{MANAGER_PHONE}' using trunk '{SIP_OUTBOUND_TRUNK_ID}'...",
+            extra={
+                "chat_context_message_count": len(self.chat_ctx.items),
+                "call_id": userdata.call_id,
+                "outbound_trunk_id": SIP_OUTBOUND_TRUNK_ID,
+                "target_phone": MANAGER_PHONE,
+            }
+        )
+
         try:
+            logger.info("Warm transfer: Awaiting connection to human agent (WarmTransferTask)...")
             result = await WarmTransferTask(
                 sip_call_to=MANAGER_PHONE,
                 sip_trunk_id=SIP_OUTBOUND_TRUNK_ID,
@@ -153,22 +183,33 @@ class MuftyKareBaseAgent(Agent):
                 extra_instructions=WARM_TRANSFER_SUMMARY,
             )
             logger.info(
-                "agent:warm_transfer connected",
-                extra={"human_agent": result.human_agent_identity},
+                "Warm transfer: Connected successfully!",
+                extra={
+                    "human_agent_identity": result.human_agent_identity,
+                    "result_type": type(result).__name__,
+                },
             )
             await self.session.say(
                 "మీరు ఇప్పుడు మా manager తో connected అయ్యారు.",
                 allow_interruptions=False,
             )
         except ToolError as e:
-            logger.error("agent:warm_transfer ToolError", extra={"error": str(e)})
+            logger.error(
+                "Warm transfer: Escalation failed with ToolError. The human recipient may have declined or the SIP dial failed.",
+                extra={"error_message": str(e)},
+                exc_info=True
+            )
             await self.session.say(
                 f"క్షమించండి, transfer fail అయింది. దయచేసి {MANAGER_PHONE} కి call చేయండి."
             )
         except Exception as e:
-            logger.exception("agent:warm_transfer unexpected error")
+            logger.exception(
+                "Warm transfer: Escalation failed with an unexpected system exception.",
+                extra={"error_message": str(e)},
+            )
             await self.session.say(
                 f"క్షమించండి, technical issue వచ్చింది. దయచేసి {MANAGER_PHONE} కి call చేయండి."
             )
         finally:
+            logger.info("Warm transfer: Terminating AI agent session after escalation attempt.")
             self.session.shutdown()

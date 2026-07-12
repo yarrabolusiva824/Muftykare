@@ -249,7 +249,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # ── 10. Background audio — decode once, create in-memory generator ──────────
     _ambience_path = BuiltinAudioClip.OFFICE_AMBIENCE.path()
     _ambient_gen = await make_ambient_generator(_ambience_path)
-    background_audio = BackgroundAudioPlayer(ambient_sound=_ambient_gen)
+    background_audio = BackgroundAudioPlayer(ambient_sound=AudioConfig(_ambient_gen, volume=2.5),)
 
     # ── 11. Start session ───────────────────────────────────────────────────
     starting_agent = AgentClass()
