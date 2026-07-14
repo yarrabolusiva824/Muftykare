@@ -37,7 +37,8 @@ from livekit.agents import (
 )
 from livekit.plugins import sarvam
 from livekit.plugins import openai as lk_openai
-
+from livekit.plugins import noise_cancellation
+from livekit.agents.voice import room_io
 # ── MuftyKare imports ───────────────────────────────────────────────────────
 from userdata import MuftyKareUserData
 from db.connection import create_pool, close_pool
@@ -258,7 +259,9 @@ async def entrypoint(ctx: JobContext) -> None:
         extra={"agent": AgentClass.__name__, "room": ctx.room.name},
     )
 
-    await session.start(agent=starting_agent, room=ctx.room)
+    await session.start(agent=starting_agent, room=ctx.room, room_input_options=room_io.RoomInputOptions(
+        noise_cancellation=noise_cancellation.BVCTelephony(),
+    ),)
     session.output.set_audio_enabled(True)
     # await warm_ambience_cache(BuiltinAudioClip.OFFICE_AMBIENCE.path())
     await background_audio.start(room=ctx.room, agent_session=session)
