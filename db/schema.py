@@ -376,14 +376,13 @@ QUERIES = {
 
 BUSINESS_RULES = {
     "support_phone": "7075232425",
-    "website": "https://muftykare.com",
+    "website": "muftykare.com",
     "working_hours": "Monday – Saturday, 10:00 AM – 7:00 PM",
     "location": (
-        "Door No. 50-50-27/5, Beside Vishnu Honda Balaji Hills, "
+        "Beside Vishnu Honda Balaji Hills,"
         "NH-16, Balayya Sastri Layout, Seethammadhara, "
-        "Visakhapatnam - 530013, Andhra Pradesh"
+        "Visakhapatnam"
     ),
-    "maps_link": "https://maps.app.goo.gl/BmbSpo1FgXDwfaky9",
     "service_types": {
         "EXPRESS":   "Express Service — within 12 hours",
         "DRY_CLEAN": "Dry Cleaning — within 4 days",
