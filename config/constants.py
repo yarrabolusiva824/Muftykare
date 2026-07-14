@@ -115,14 +115,14 @@ COMPLAINT_MEDIUM_KEYWORDS = [
 ]
 
 # ── Agent persona ───────────────────────────────────────────────────────────
-AGENT_NAME              = "Rehan"          # spoken name used across all prompts
+AGENT_NAME              = "Amelia"          # spoken name used across all prompts
 
 # ── Sarvam plugin config ────────────────────────────────────────────────────
 # "kavya" is a bulbul:v3 voice that speaks both te-IN and en-IN, so only the
 # target language code needs to change — the speaker/voice identity stays the same.
 SARVAM_STT_MODEL        = "saaras:v3"
 SARVAM_TTS_MODEL        = "bulbul:v3"
-SARVAM_TTS_SPEAKER      = "rehan"          # warm female voice, Telugu + English
+SARVAM_TTS_SPEAKER      = "amelia"          # warm female voice, Telugu + English
 # SARVAM_TTS_SPEAKER      = "kavya"          # warm female voice, Telugu + English
 SARVAM_LANGUAGE         = AGENT_LANGUAGE   # "te-IN" (default) or "en-IN"
 SARVAM_ENDPOINTING_MS   = 0.07             # 70ms — Sarvam's processing latency
