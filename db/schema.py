@@ -383,6 +383,7 @@ BUSINESS_RULES = {
         "NH-16, Balayya Sastri Layout, Seethammadhara, "
         "Visakhapatnam"
     ),
+    "maps_link": "https://maps.app.goo.gl/BmbSpo1FgXDwfaky9",
     "service_types": {
         "EXPRESS":   "Express Service — within 12 hours",
         "DRY_CLEAN": "Dry Cleaning — within 4 days",
