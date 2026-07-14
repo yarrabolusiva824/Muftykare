@@ -119,7 +119,8 @@ COMPLAINT_MEDIUM_KEYWORDS = [
 # target language code needs to change — the speaker/voice identity stays the same.
 SARVAM_STT_MODEL        = "saaras:v3"
 SARVAM_TTS_MODEL        = "bulbul:v3"
-SARVAM_TTS_SPEAKER      = "kavya"          # warm female voice, Telugu + English
+SARVAM_TTS_SPEAKER      = "sophia"          # warm female voice, Telugu + English
+# SARVAM_TTS_SPEAKER      = "kavya"          # warm female voice, Telugu + English
 SARVAM_LANGUAGE         = AGENT_LANGUAGE   # "te-IN" (default) or "en-IN"
 SARVAM_ENDPOINTING_MS   = 0.07             # 70ms — Sarvam's processing latency
 
