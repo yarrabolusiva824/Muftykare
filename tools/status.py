@@ -21,11 +21,30 @@ from config.constants import (
     INTENT_BILLING,
     OUTCOME_STATUS_PROVIDED,
 )
+from prompts.shared import _IS_ENGLISH
 from userdata import MuftyKareUserData
 from logger import get_logger
 
 logger = get_logger(__name__)
 RunCtx = RunContext[MuftyKareUserData]
+
+# Guard/fallback strings spoken as-is (not LLM-generated) — need an explicit
+# English variant alongside the Telugu default.
+_MSG = {
+    "no_phone_status": "Could you share your phone number? I'll need it to check the status."
+        if _IS_ENGLISH else "మీ phone number తెలియదు. Status check కోసం phone number చెప్పండి.",
+    "no_phone_bill": "Could you share your phone number? I'll need it to check the bill."
+        if _IS_ENGLISH else "మీ phone number తెలియదు. Bill check కోసం phone number చెప్పండి.",
+    "no_phone": "I don't have your phone number."
+        if _IS_ENGLISH else "మీ phone number తెలియదు.",
+    "no_order": "We couldn't find any order on your account."
+        if _IS_ENGLISH else "మీ account లో ఏ order కూడా కనుగొనబడలేదు.",
+    "no_orders": "We couldn't find any orders on your account."
+        if _IS_ENGLISH else "మీ account లో ఏ orders కూడా కనుగొనబడలేదు.",
+    "no_items": "No items found for order #{order_id}."
+        if _IS_ENGLISH else "Order #{order_id} లో items కనుగొనబడలేదు.",
+    "unknown_payment_status": "payment status unknown" if _IS_ENGLISH else "payment status తెలియదు",
+}
 
 
 @function_tool
@@ -52,7 +71,7 @@ async def get_order_status(
 
     # Guard — customer must be identified
     if not context.userdata.customer_id:
-        return "మీ phone number తెలియదు. Status check కోసం phone number చెప్పండి."
+        return _MSG["no_phone_status"]
 
     try:
         order = await fetch_latest_order(pool, context.userdata.customer_id)
@@ -60,7 +79,7 @@ async def get_order_status(
         raise ToolError("Failed to fetch order status") from e
 
     if not order:
-        return "మీ account లో ఏ order కూడా కనుగొనబడలేదు."
+        return _MSG["no_order"]
 
     # Update userdata
     context.userdata.current_order_id = order["id"]
@@ -79,7 +98,7 @@ async def get_order_status(
     else:
         delivery_msg = ORDER_STATUS_RESPONSES["cleaning"]
 
-    payment_msg = PAYMENT_STATUS_RESPONSES.get(pmt_status, "payment status తెలియదు")
+    payment_msg = PAYMENT_STATUS_RESPONSES.get(pmt_status, _MSG["unknown_payment_status"])
 
     logger.info(
         "tool:get_order_status result",
@@ -113,7 +132,7 @@ async def get_bill(
     pool = context.userdata.db_pool
 
     if not context.userdata.customer_id:
-        return "మీ phone number తెలియదు. Bill check కోసం phone number చెప్పండి."
+        return _MSG["no_phone_bill"]
 
     try:
         order = await fetch_latest_order(pool, context.userdata.customer_id)
@@ -121,7 +140,7 @@ async def get_bill(
         raise ToolError("Failed to fetch bill") from e
 
     if not order:
-        return "మీ account లో ఏ order కూడా కనుగొనబడలేదు."
+        return _MSG["no_order"]
 
     context.userdata.current_order_id = order["id"]
     context.userdata.intent = INTENT_BILLING
@@ -166,13 +185,13 @@ async def get_order_items(
     pool = context.userdata.db_pool
 
     if not context.userdata.customer_id:
-        return "మీ phone number తెలియదు."
+        return _MSG["no_phone"]
 
     # Get latest order first if not already known
     if not context.userdata.current_order_id:
         order = await fetch_latest_order(pool, context.userdata.customer_id)
         if not order:
-            return "మీ account లో ఏ order కూడా కనుగొనబడలేదు."
+            return _MSG["no_order"]
         context.userdata.current_order_id = order["id"]
 
     try:
@@ -181,7 +200,7 @@ async def get_order_items(
         raise ToolError("Failed to fetch order items") from e
 
     if not items:
-        return f"Order #{context.userdata.current_order_id} లో items కనుగొనబడలేదు."
+        return _MSG["no_items"].format(order_id=context.userdata.current_order_id)
 
     lines = []
     for item in items:
@@ -220,7 +239,7 @@ async def get_all_orders(
     pool = context.userdata.db_pool
 
     if not context.userdata.customer_id:
-        return "మీ phone number తెలియదు."
+        return _MSG["no_phone"]
 
     try:
         orders = await fetch_all_orders(pool, context.userdata.customer_id, limit=3)
@@ -228,7 +247,7 @@ async def get_all_orders(
         raise ToolError("Failed to fetch orders") from e
 
     if not orders:
-        return "మీ account లో ఏ orders కూడా కనుగొనబడలేదు."
+        return _MSG["no_orders"]
 
     lines = []
     for o in orders:

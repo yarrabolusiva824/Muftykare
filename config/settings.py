@@ -51,6 +51,11 @@ SIP_OUTBOUND_TRUNK_ID = _optional("SIP_OUTBOUND_TRUNK_ID")
 # Manager phone number for WarmTransfer escalation
 MANAGER_PHONE       = _optional("MANAGER_PHONE", "7075232425")
 
+# ── Language ───────────────────────────────────────────────────────────────
+# Which language the agent speaks/listens in for this deployment.
+# "te-IN" (Telugu, default) or "en-IN" (English).
+AGENT_LANGUAGE      = _optional("AGENT_LANGUAGE", "te-IN").strip()
+
 # ── Application ────────────────────────────────────────────────────────────
 LOG_LEVEL           = _optional("LOG_LEVEL", "INFO")
 LOG_DIR             = _optional("LOG_DIR", "logs")

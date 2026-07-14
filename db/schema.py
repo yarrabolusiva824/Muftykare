@@ -405,6 +405,14 @@ BUSINESS_RULES = {
         "paid":        "payment complete అయింది",
         "semi_paid":   "partial payment మాత్రమే జరిగింది",
     },
+    "order_status_voice_responses_en": {
+        "received":    "your clothes are with us, cleaning is in progress",
+        "ready":       "your clothes are ready and are on their way for delivery",
+        "delivered":   "your clothes have been delivered",
+        "not_paid":    "payment is still pending",
+        "paid":        "payment is complete",
+        "semi_paid":   "only partial payment has been made",
+    },
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -2,6 +2,9 @@
 config/constants.py — All string constants for MuftyKare voice agent.
 Import from here instead of hardcoding strings anywhere.
 """
+from config.settings import AGENT_LANGUAGE
+
+_IS_ENGLISH = AGENT_LANGUAGE == "en-IN"
 
 # ── SIP participant attribute keys ─────────────────────────────────────────
 SIP_ATTR_PHONE          = "sip.phoneNumber"      # caller's phone number
@@ -62,9 +65,10 @@ SERVICE_LABELS = {
     SERVICE_SHOE_CLEAN: "Shoe Cleaning",
 }
 
-# ── Order status → Telugu voice response mapping ───────────────────────────
-# Used by StatusAgent to convert DB booleans into natural Telugu speech
-ORDER_STATUS_RESPONSES = {
+# ── Order status → voice response mapping ──────────────────────────────────
+# Used by StatusAgent to convert DB booleans into natural speech.
+# Picked by AGENT_LANGUAGE — Telugu (default) or English.
+_ORDER_STATUS_RESPONSES_TE = {
     # (status=False, ready_to_deliver=False) → being cleaned
     "cleaning":   "మీ బట్టలు cleaning లో ఉన్నాయి, కొంచెం సమయం పడుతుంది",
     # (status=False, ready_to_deliver=True) → ready, out for delivery
@@ -75,11 +79,27 @@ ORDER_STATUS_RESPONSES = {
     "not_found":  "మీ phone number తో ఏ order కనుగొనబడలేదు",
 }
 
-PAYMENT_STATUS_RESPONSES = {
+_ORDER_STATUS_RESPONSES_EN = {
+    "cleaning":   "Your clothes are still being cleaned, it'll take a little more time",
+    "ready":      "Your clothes are ready and are on their way for delivery",
+    "delivered":  "Your clothes have been delivered",
+    "not_found":  "We couldn't find any order with that phone number",
+}
+
+_PAYMENT_STATUS_RESPONSES_TE = {
     "not paid":   "payment pending ఉంది",
     "paid":       "payment complete అయింది",
     "semi-paid":  "partial payment మాత్రమే జరిగింది, మిగిలిన amount pending ఉంది",
 }
+
+_PAYMENT_STATUS_RESPONSES_EN = {
+    "not paid":   "payment is still pending",
+    "paid":       "payment is complete",
+    "semi-paid":  "only partial payment has been made, the remaining amount is pending",
+}
+
+ORDER_STATUS_RESPONSES = _ORDER_STATUS_RESPONSES_EN if _IS_ENGLISH else _ORDER_STATUS_RESPONSES_TE
+PAYMENT_STATUS_RESPONSES = _PAYMENT_STATUS_RESPONSES_EN if _IS_ENGLISH else _PAYMENT_STATUS_RESPONSES_TE
 
 # ── Complaint severity keywords ────────────────────────────────────────────
 # ComplaintAgent uses these to classify severity before routing
@@ -95,10 +115,12 @@ COMPLAINT_MEDIUM_KEYWORDS = [
 ]
 
 # ── Sarvam plugin config ────────────────────────────────────────────────────
+# "kavya" is a bulbul:v3 voice that speaks both te-IN and en-IN, so only the
+# target language code needs to change — the speaker/voice identity stays the same.
 SARVAM_STT_MODEL        = "saaras:v3"
 SARVAM_TTS_MODEL        = "bulbul:v3"
-SARVAM_TTS_SPEAKER      = "kavya"          # warm Telugu female voice
-SARVAM_LANGUAGE         = "te-IN"          # Telugu (India)
+SARVAM_TTS_SPEAKER      = "kavya"          # warm female voice, Telugu + English
+SARVAM_LANGUAGE         = AGENT_LANGUAGE   # "te-IN" (default) or "en-IN"
 SARVAM_ENDPOINTING_MS   = 0.07             # 70ms — Sarvam's processing latency
 
 # ── LLM config ─────────────────────────────────────────────────────────────

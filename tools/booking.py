@@ -17,11 +17,23 @@ from config.constants import (
     SERVICE_WASH_FOLD, SERVICE_DRY_CLEAN, SERVICE_EXPRESS, SERVICE_SHOE_CLEAN,
     INTENT_BOOKING, OUTCOME_BOOKING_CREATED,
 )
+from prompts.shared import _IS_ENGLISH
 from userdata import MuftyKareUserData
 from logger import get_logger
 
 logger = get_logger(__name__)
 RunCtx = RunContext[MuftyKareUserData]
+
+# Guard/fallback strings spoken as-is (not LLM-generated) — need an explicit
+# English variant alongside the Telugu default.
+_MSG = {
+    "no_phone_booking": "Could you share your phone number? I'll need it before I can book this."
+        if _IS_ENGLISH else "మీ phone number తెలియదు. Booking చేయడానికి ముందు phone number చెప్పండి.",
+    "no_order_reschedule": "We couldn't find an order to reschedule. Could you share the order ID?"
+        if _IS_ENGLISH else "ఏ order కూడా found కాలేదు. Reschedule చేయడానికి order ID చెప్పండి.",
+    "no_active_booking": "We couldn't find an active booking to cancel."
+        if _IS_ENGLISH else "Cancel చేయడానికి active booking కనుగొనబడలేదు.",
+}
 
 
 @function_tool
@@ -114,7 +126,7 @@ async def create_booking(
 
     # Guard — customer must be identified
     if not context.userdata.customer_id:
-        return "మీ phone number తెలియదు. Booking చేయడానికి ముందు phone number చెప్పండి."
+        return _MSG["no_phone_booking"]
 
     # Guard — slot must be selected
     if not context.userdata.pickup_slot_date or not context.userdata.pickup_slot_name:
@@ -174,7 +186,7 @@ async def reschedule_slot(
     logger.info("tool:reschedule_slot called", extra={"new_date": new_date, "new_time": new_time_preference})
 
     if not context.userdata.current_order_id:
-        return "ఏ order కూడా found కాలేదు. Reschedule చేయడానికి order ID చెప్పండి."
+        return _MSG["no_order_reschedule"]
 
     try:
         parsed_date = date.fromisoformat(new_date)
@@ -220,7 +232,7 @@ async def cancel_booking(
         return "Please confirm cancellation first. Ask: 'Meeru nijamgaa cancel cheyyalanukunnaara?'"
 
     if not context.userdata.current_order_id:
-        return "Cancel చేయడానికి active booking కనుగొనబడలేదు."
+        return _MSG["no_active_booking"]
 
     # Mark order as cancelled — soft cancel logged to voice_call_log via outcome
     context.userdata.outcome = "booking_cancelled"

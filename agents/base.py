@@ -11,13 +11,15 @@ from __future__ import annotations
 
 from livekit.agents import Agent, RunContext, ToolError
 from livekit.agents.beta.workflows import WarmTransferTask
-from config.settings import MANAGER_PHONE, SIP_OUTBOUND_TRUNK_ID
+from config.settings import MANAGER_PHONE, SIP_OUTBOUND_TRUNK_ID, AGENT_LANGUAGE
 from config.constants import CHAT_CTX_MAX_ITEMS
 from userdata import MuftyKareUserData
 from logger import get_logger
 
 logger = get_logger(__name__)
 RunCtx = RunContext[MuftyKareUserData]
+
+_IS_ENGLISH = AGENT_LANGUAGE == "en-IN"
 
 # Summary shown to human manager when warm transfer connects
 WARM_TRANSFER_SUMMARY = """
@@ -29,6 +31,26 @@ Summarize:
 - WHY escalation is needed
 Keep summary under 150 words, spoken naturally in English.
 """
+
+# Hardcoded fallback lines spoken by the AI itself (not LLM-generated),
+# so they need an explicit English variant alongside the Telugu default.
+_WARM_TRANSFER_STRINGS = {
+    "te-IN": {
+        "hold_announcement": "ఒక్క నిమిషం hold లో ఉండండి, మా manager మీతో మాట్లాడతారు.",
+        "no_manager_configured": "క్షమించండి, ప్రస్తుతం మా manager available గా లేరు. దయచేసి {phone} కి direct గా call చేయండి.",
+        "connected": "మీరు ఇప్పుడు మా manager తో connected అయ్యారు.",
+        "transfer_failed": "క్షమించండి, transfer fail అయింది. దయచేసి {phone} కి call చేయండి.",
+        "technical_issue": "క్షమించండి, technical issue వచ్చింది. దయచేసి {phone} కి call చేయండి.",
+    },
+    "en-IN": {
+        "hold_announcement": "Please hold for a moment, our manager will speak with you.",
+        "no_manager_configured": "Sorry, our manager isn't available right now. Please call {phone} directly.",
+        "connected": "You're now connected with our manager.",
+        "transfer_failed": "Sorry, the transfer failed. Please call {phone}.",
+        "technical_issue": "Sorry, we ran into a technical issue. Please call {phone}.",
+    },
+}
+_WT = _WARM_TRANSFER_STRINGS["en-IN"] if _IS_ENGLISH else _WARM_TRANSFER_STRINGS["te-IN"]
 
 
 class MuftyKareBaseAgent(Agent):
@@ -137,7 +159,7 @@ class MuftyKareBaseAgent(Agent):
         logger.info("Warm transfer: Playing hold announcement to customer...")
         # Announce hold — must not be interrupted
         await self.session.say(
-            "ఒక్క నిమిషం hold లో ఉండండి, మా manager మీతో మాట్లాడతారు.",
+            _WT["hold_announcement"],
             allow_interruptions=False,
         )
         logger.info("Warm transfer: Hold announcement completed successfully.")
@@ -159,8 +181,7 @@ class MuftyKareBaseAgent(Agent):
                 }
             )
             await self.session.say(
-                "క్షమించండి, ప్రస్తుతం మా manager available గా లేరు. "
-                f"దయచేసి {MANAGER_PHONE or '7075232425'} కి direct గా call చేయండి.",
+                _WT["no_manager_configured"].format(phone=MANAGER_PHONE or "7075232425"),
             )
             return
 
@@ -190,7 +211,7 @@ class MuftyKareBaseAgent(Agent):
                 },
             )
             await self.session.say(
-                "మీరు ఇప్పుడు మా manager తో connected అయ్యారు.",
+                _WT["connected"],
                 allow_interruptions=False,
             )
         except ToolError as e:
@@ -200,7 +221,7 @@ class MuftyKareBaseAgent(Agent):
                 exc_info=True
             )
             await self.session.say(
-                f"క్షమించండి, transfer fail అయింది. దయచేసి {MANAGER_PHONE} కి call చేయండి."
+                _WT["transfer_failed"].format(phone=MANAGER_PHONE)
             )
         except Exception as e:
             logger.exception(
@@ -208,7 +229,7 @@ class MuftyKareBaseAgent(Agent):
                 extra={"error_message": str(e)},
             )
             await self.session.say(
-                f"క్షమించండి, technical issue వచ్చింది. దయచేసి {MANAGER_PHONE} కి call చేయండి."
+                _WT["technical_issue"].format(phone=MANAGER_PHONE)
             )
         finally:
             logger.info("Warm transfer: Terminating AI agent session after escalation attempt.")

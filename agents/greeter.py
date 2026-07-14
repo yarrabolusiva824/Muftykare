@@ -16,6 +16,7 @@ from tools.customer import lookup_caller, lookup_customer_by_number, save_new_cu
 from tools.pricing import get_all_prices
 from tools.call_log import log_call_start_tool
 from prompts.greeter import GREETER_PROMPT
+from prompts.shared import _IS_ENGLISH
 from config.constants import (
     AGENT_BOOKING, AGENT_STATUS, AGENT_COMPLAINT,
     INTENT_BOOKING, INTENT_STATUS, INTENT_BILLING, INTENT_COMPLAINT,
@@ -136,6 +137,8 @@ class GreeterAgent(MuftyKareBaseAgent):
 
         # Guard — must know who customer is
         if not userdata.customer_id:
+            if _IS_ENGLISH:
+                return "Could you share your phone number? I'll check your account and give you the status."
             return "మీ phone number చెప్పగలరా? మీ account check చేసి status చెప్తాను."
 
         logger.info("agent:greeter → status")

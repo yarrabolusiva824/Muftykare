@@ -144,7 +144,7 @@ async def entrypoint(ctx: JobContext) -> None:
         customer_id=customer["id"] if customer else None,
         customer_name=customer["name"] if customer else None,
         customer_address=customer.get("address") if customer else None,
-        language="te-IN",
+        language=SARVAM_LANGUAGE,
     )
 
     # Pre-populate agents registry
@@ -167,7 +167,7 @@ async def entrypoint(ctx: JobContext) -> None:
             caller_phone=caller_phone,
             customer_id=userdata.customer_id,
             direction=DIRECTION_INBOUND,
-            language="te-IN",
+            language=SARVAM_LANGUAGE,
         )
         userdata.call_log_id = log_id
     except Exception as e:

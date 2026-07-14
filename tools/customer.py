@@ -19,11 +19,13 @@ from livekit.agents import RunContext, ToolError
 from livekit.agents.llm import function_tool
 
 from db.queries import fetch_customer_by_phone, insert_customer
+from prompts.shared import _IS_ENGLISH
 from userdata import MuftyKareUserData
 from logger import get_logger
 
 logger = get_logger(__name__)
 RunCtx = RunContext[MuftyKareUserData]
+_GREETING_LANGUAGE = "English" if _IS_ENGLISH else "Telugu"
 
 
 @function_tool
@@ -94,7 +96,7 @@ async def lookup_caller(context: RunCtx) -> str:
     return (
         f"Caller identified: {result['name']}, customer ID {result['id']}. "
         f"Address on file: {result.get('address') or 'not saved'}. "
-        f"Greet them by name '{result['name']}' in Telugu."
+        f"Greet them by name '{result['name']}' in {_GREETING_LANGUAGE}."
     )
 
 
