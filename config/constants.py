@@ -114,6 +114,9 @@ COMPLAINT_MEDIUM_KEYWORDS = [
     "raaledu", "chaaala time", "wrong number",
 ]
 
+# ── Agent persona ───────────────────────────────────────────────────────────
+AGENT_NAME              = "Rehan"          # spoken name used across all prompts
+
 # ── Sarvam plugin config ────────────────────────────────────────────────────
 # "kavya" is a bulbul:v3 voice that speaks both te-IN and en-IN, so only the
 # target language code needs to change — the speaker/voice identity stays the same.

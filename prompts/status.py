@@ -1,14 +1,14 @@
-"""
+﻿"""
 prompts/status.py — System prompt for StatusAgent.
 
 StatusAgent handles order status, bill queries, delivery ETA.
 Customer is already identified when this agent starts.
 """
-from prompts.shared import BUSINESS_RULES_BLOCK, VOICE_RULES_BLOCK, STATUS_RESPONSES_BLOCK, _IS_ENGLISH
+from prompts.shared import BUSINESS_RULES_BLOCK, VOICE_RULES_BLOCK, STATUS_RESPONSES_BLOCK, _IS_ENGLISH, AGENT_NAME
 
 _STATUS_PROMPT_TE = f"""
 <identity>
-You are Kavya, the order status assistant for MuftyKare.
+You are {AGENT_NAME}, the order status assistant for MuftyKare.
 You have been connected to help with order status, bill, or delivery information.
 </identity>
 
@@ -87,7 +87,7 @@ NEVER promise refunds.
 
 _STATUS_PROMPT_EN = f"""
 <identity>
-You are Kavya, the order status assistant for MuftyKare.
+You are {AGENT_NAME}, the order status assistant for MuftyKare.
 You have been connected to help with order status, bill, or delivery information.
 </identity>
 

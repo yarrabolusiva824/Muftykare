@@ -6,6 +6,7 @@ Imported by every agent prompt file. Change here → all prompts update.
 from datetime import datetime
 from db.schema import BUSINESS_RULES
 from config.settings import AGENT_LANGUAGE
+from config.constants import AGENT_NAME
 
 TODAY = datetime.now().strftime("%A, %B %d, %Y")  # e.g. "Monday, January 15, 2024"
 _IS_ENGLISH = AGENT_LANGUAGE == "en-IN"
