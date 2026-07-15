@@ -81,12 +81,14 @@ class OutboundAgent(MuftyKareBaseAgent):
     ) -> None:
         prompt = _PROMPT_MAP.get(call_type, OUTBOUND_REMINDER_PROMPT)
         tools = [reschedule_slot, get_bill]
+        self._opening_line: str | None = None
 
         if call_type == CALL_TYPE_PROSPECTING:
             from prompts.shared import _IS_ENGLISH
             ctx = customer_context or {}
+            self._opening_line = _build_prospecting_opener(ctx, _IS_ENGLISH)
             prompt = prompt.format(
-                opening_line=_build_prospecting_opener(ctx, _IS_ENGLISH),
+                opening_line=self._opening_line,
                 address=ctx.get("address") or ("your address" if _IS_ENGLISH else "మీ address"),
             )
             tools = [reschedule_slot, log_campaign_outcome]
@@ -101,10 +103,19 @@ class OutboundAgent(MuftyKareBaseAgent):
         """
         Outbound on_enter: speak the opening line immediately.
         The agent called the customer — start talking, don't wait.
+
+        Prospecting calls speak a precomputed opening line directly via
+        session.say() rather than generate_reply() — asking the LLM to
+        freely compose the opening (with no user turn to react to) risks it
+        leaking/paraphrasing other parts of the instructions instead of
+        sticking to the greeting.
         """
         logger.info(f"agent:outbound on_enter call_type={self.call_type}")
-        # Generate opening — the prompt defines the exact opening line
-        self.session.generate_reply(tool_choice="none")
+        if self._opening_line:
+            await self.session.say(self._opening_line, allow_interruptions=True)
+        else:
+            # Generate opening — the prompt defines the exact opening line
+            self.session.generate_reply(tool_choice="none")
 
     @function_tool
     async def to_booking(self, context: RunCtx) -> tuple:
