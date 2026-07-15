@@ -196,17 +196,17 @@ async def entrypoint(ctx: JobContext) -> None:
 
         # TTS — Sarvam Bulbul v3, Telugu female voice
         # TEMP: swapped for OpenAI TTS for testing — restore this once testing is done
-        # tts=sarvam.TTS(
-        #     target_language_code=SARVAM_LANGUAGE,
-        #     model=SARVAM_TTS_MODEL,
-        #     speaker=SARVAM_TTS_SPEAKER,
-        # ),
+        tts=sarvam.TTS(
+            target_language_code=SARVAM_LANGUAGE,
+            model=SARVAM_TTS_MODEL,
+            speaker=SARVAM_TTS_SPEAKER,
+        ),
 
         # TTS — OpenAI (testing only)
-        tts=lk_openai.TTS(
-            model="tts-1",
-            voice="nova",
-        ),
+        # tts=lk_openai.TTS(
+        #     model="tts-1",
+        #     voice="nova",
+        # ),
 
         # Turn detection — Sarvam handles VAD internally via flush_signal
         # Use top-level AgentSession kwargs (not a dict)
