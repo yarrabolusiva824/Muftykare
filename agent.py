@@ -105,13 +105,24 @@ async def start_call_recording(room_name: str, call_id: str) -> str | None:
 
 
 async def stop_call_recording(egress_id: str) -> None:
-    """Stop LiveKit Egress recording."""
+    """Stop LiveKit Egress recording — handles already-completed egress gracefully."""
+    lk = None
     try:
         lk = lkapi.LiveKitAPI()
         await lk.egress.stop_egress(lkapi.StopEgressRequest(egress_id=egress_id))
-        await lk.aclose()
+        logger.info("call recording stopped", extra={"egress_id": egress_id})
     except Exception as e:
-        logger.warning("call recording stop failed", extra={"error": str(e)})
+        error_msg = str(e)
+        if "EGRESS_COMPLETE" in error_msg:
+            logger.info("call recording already completed", extra={"egress_id": egress_id})
+        else:
+            logger.warning("call recording stop failed", extra={"error": error_msg})
+    finally:
+        if lk:
+            try:
+                await lk.aclose()
+            except Exception:
+                pass
 
 
 # ── AgentServer ─────────────────────────────────────────────────────────────
@@ -218,6 +229,19 @@ async def entrypoint(ctx: JobContext) -> None:
     egress_id = await start_call_recording(ctx.room.name, call_id)
     if egress_id:
         logger.info("call recording started", extra={"egress_id": egress_id})
+
+    # ── 6c. Log recording to DB ─────────────────────────────────────────────
+    if egress_id:
+        from db.queries import log_call_recording
+        await log_call_recording(
+            db_pool,
+            call_id=call_id,
+            customer_id=userdata.customer_id,
+            caller_phone=caller_phone,
+            egress_id=egress_id,
+            file_path=f"calls/{call_id}.ogg",
+            call_log_id=userdata.call_log_id,
+        )
 
     # ── 7. Build AgentSession ───────────────────────────────────────────────
     session = AgentSession[MuftyKareUserData](

@@ -249,6 +249,20 @@ async def migrate():
         await pg.execute("CREATE INDEX IF NOT EXISTS idx_vcl_customer ON voice_call_log(customer_id)")
         await pg.execute("CREATE INDEX IF NOT EXISTS idx_vcl_started  ON voice_call_log(call_started_at DESC)")
 
+        await pg.execute("""
+        CREATE TABLE IF NOT EXISTS call_recordings (
+            id              SERIAL PRIMARY KEY,
+            call_id         TEXT NOT NULL,
+            customer_id     INTEGER REFERENCES customer(id) ON DELETE SET NULL,
+            caller_phone    TEXT,
+            egress_id       TEXT NOT NULL UNIQUE,
+            file_path       TEXT NOT NULL,
+            file_size_bytes BIGINT,
+            duration_secs   INTEGER,
+            recorded_at     TIMESTAMPTZ DEFAULT NOW(),
+            call_log_id     INTEGER REFERENCES voice_call_log(id) ON DELETE SET NULL
+        )""")
+
         print("    All tables created.")
 
         # ── STEP 2: Migrate data ──────────────────────────────────────

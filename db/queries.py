@@ -384,6 +384,38 @@ async def log_call_end(
     )
 
 
+async def log_call_recording(
+    pool,
+    call_id: str,
+    customer_id: int | None,
+    caller_phone: str | None,
+    egress_id: str,
+    file_path: str,
+    call_log_id: int | None = None,
+) -> int | None:
+    """Insert a call recording record. Returns the new row id."""
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO call_recordings
+                    (call_id, customer_id, caller_phone, egress_id, file_path, call_log_id)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id
+                """,
+                call_id,
+                customer_id,
+                caller_phone,
+                egress_id,
+                file_path,
+                call_log_id,
+            )
+            return row["id"] if row else None
+    except Exception as e:
+        logger.warning("log_call_recording failed", extra={"error": str(e)})
+        return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PRICING QUERIES
 # ─────────────────────────────────────────────────────────────────────────────

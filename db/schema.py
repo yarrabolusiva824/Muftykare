@@ -149,6 +149,19 @@ voice_call_log (
     outcome         TEXT,       -- 'booking_created' | 'status_provided' | 'escalated' | 'no_action'
     transcript_path TEXT        -- path to daily log file for this call
 )
+
+call_recordings (
+    id              INTEGER PRIMARY KEY,
+    call_id         TEXT,
+    customer_id     INTEGER → customer.id,
+    caller_phone    TEXT,
+    egress_id       TEXT UNIQUE,
+    file_path       TEXT,
+    file_size_bytes BIGINT,
+    duration_secs   INTEGER,
+    recorded_at     TIMESTAMPTZ,
+    call_log_id     INTEGER → voice_call_log.id
+)
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
