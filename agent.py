@@ -26,6 +26,7 @@ load_dotenv()
 
 # ── LiveKit imports ─────────────────────────────────────────────────────────
 from livekit import rtc
+from livekit import api as lkapi
 from livekit.agents import (
     AgentServer,
     AgentSession,
@@ -74,6 +75,44 @@ _AGENT_MAP = {
     "complaint": ComplaintAgent,
     "outbound":  OutboundAgent,
 }
+
+async def start_call_recording(room_name: str, call_id: str) -> str | None:
+    """Start LiveKit Egress recording to local MinIO. Returns egress_id or None on failure."""
+    try:
+        lk = lkapi.LiveKitAPI()
+        req = lkapi.RoomCompositeEgressRequest(
+            room_name=room_name,
+            audio_only=True,
+            file_outputs=[lkapi.EncodedFileOutput(
+                file_type=lkapi.EncodedFileType.OGG,
+                filepath=f"calls/{call_id}.ogg",
+                s3=lkapi.S3Upload(
+                    bucket=os.getenv("MINIO_BUCKET", "muftykare-calls"),
+                    region="us-east-1",
+                    access_key=os.getenv("MINIO_ACCESS_KEY"),
+                    secret=os.getenv("MINIO_SECRET_KEY"),
+                    endpoint=os.getenv("MINIO_ENDPOINT", "http://localhost:9000"),
+                    force_path_style=True,
+                ),
+            )],
+        )
+        res = await lk.egress.start_room_composite_egress(req)
+        await lk.aclose()
+        return res.egress_id
+    except Exception as e:
+        logger.warning("call recording failed to start", extra={"error": str(e)})
+        return None
+
+
+async def stop_call_recording(egress_id: str) -> None:
+    """Stop LiveKit Egress recording."""
+    try:
+        lk = lkapi.LiveKitAPI()
+        await lk.egress.stop_egress(lkapi.StopEgressRequest(egress_id=egress_id))
+        await lk.aclose()
+    except Exception as e:
+        logger.warning("call recording stop failed", extra={"error": str(e)})
+
 
 # ── AgentServer ─────────────────────────────────────────────────────────────
 server = AgentServer()
@@ -174,6 +213,12 @@ async def entrypoint(ctx: JobContext) -> None:
         # Non-fatal — don't crash the call if logging fails
         logger.warning("log_call_start failed", extra={"error": str(e)})
 
+    egress_id = None
+    # ── 6b. Start call recording ────────────────────────────────────────────
+    egress_id = await start_call_recording(ctx.room.name, call_id)
+    if egress_id:
+        logger.info("call recording started", extra={"egress_id": egress_id})
+
     # ── 7. Build AgentSession ───────────────────────────────────────────────
     session = AgentSession[MuftyKareUserData](
         userdata=userdata,
@@ -248,6 +293,8 @@ async def entrypoint(ctx: JobContext) -> None:
         except Exception as e:
             logger.warning("log_call_end failed", extra={"error": str(e)})
         finally:
+            if egress_id:
+                await stop_call_recording(egress_id)
             await background_audio.aclose()
             await close_pool(db_pool)
 
