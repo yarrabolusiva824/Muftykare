@@ -295,17 +295,10 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
 
         # LLM — GPT-4o, parallel_tool_calls=False for voice reliability
-        # llm=lk_openai.LLM(
-        #     model=LLM_MODEL,
-        #     parallel_tool_calls=False,
-        # ),
-
         llm=lk_openai.LLM(
-    model="llama-3.3-70b-versatile",
-    base_url="https://api.groq.com/openai/v1",
-    api_key=os.getenv("GROQ_API_KEY"),
-    parallel_tool_calls=False,
-),
+            model=LLM_MODEL,
+            parallel_tool_calls=False,
+        ),
 
         # TTS — Sarvam Bulbul v3, Telugu female voice
         # TEMP: swapped for OpenAI TTS for testing — restore this once testing is done
@@ -313,6 +306,7 @@ async def entrypoint(ctx: JobContext) -> None:
             target_language_code=SARVAM_LANGUAGE,
             model=SARVAM_TTS_MODEL,
             speaker=SARVAM_TTS_SPEAKER,
+            min_buffer_size=20,
         ),
 
         # TTS — OpenAI (testing only)
