@@ -266,6 +266,26 @@ QUERIES = {
         LIMIT 1
     """,
 
+    "get_outbound_customer_context": """
+        SELECT
+            c.id,
+            c.name,
+            c.address,
+            COUNT(o.id)                                                     AS total_orders,
+            MAX(o.recieved_on)                                              AS last_order_date,
+            COALESCE(SUM(CASE WHEN o.pmt_status = 'not paid'
+                               THEN COALESCE(o.total_price,0) - COALESCE(o.discount,0) + COALESCE(o.other_charges,0)
+                               ELSE 0 END), 0)                              AS pending_amount,
+            BOOL_OR(sc.name = 'Dry Clean')                                  AS has_used_dry_cleaning
+        FROM customer c
+        LEFT JOIN orders o           ON o.cust_id = c.id
+        LEFT JOIN ordered_items oi   ON oi.ord_id = o.id
+        LEFT JOIN service_category sc ON oi.serv_type_id = sc.id
+        WHERE RIGHT(COALESCE(c.phone_num, ''), 10) = RIGHT($1, 10)
+        GROUP BY c.id, c.name, c.address
+        LIMIT 1
+    """,
+
     "get_latest_order": """
         SELECT
             o.id,

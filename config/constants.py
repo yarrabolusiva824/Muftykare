@@ -19,9 +19,10 @@ DIRECTION_INBOUND   = "inbound"
 DIRECTION_OUTBOUND  = "outbound"
 
 # ── Outbound call types (passed via FastAPI POST /call/outbound) ───────────
-CALL_TYPE_REMINDER  = "reminder"        # pickup reminder 30min before slot
-CALL_TYPE_DELIVERY  = "delivery"        # delivery confirmation
-CALL_TYPE_PAYMENT   = "payment"         # payment reminder
+CALL_TYPE_REMINDER     = "reminder"            # pickup reminder 30min before slot
+CALL_TYPE_DELIVERY     = "delivery"            # delivery confirmation
+CALL_TYPE_PAYMENT      = "payment"             # payment reminder
+CALL_TYPE_PROSPECTING  = "dry_cleaning_promo"  # outbound dry-cleaning pitch campaign
 
 # ── Intent names (written to voice_call_log.intent) ───────────────────────
 INTENT_BOOKING      = "booking"
@@ -40,6 +41,13 @@ OUTCOME_PAYMENT_REMINDED    = "payment_reminded"
 OUTCOME_NO_ACTION           = "no_action"
 OUTCOME_MISSED              = "missed"
 OUTCOME_WRONG_NUMBER        = "wrong_number"
+
+# ── Campaign outcomes (prospecting calls, written to voice_call_log.outcome) ─
+OUTCOME_BOOKED               = "booked"
+OUTCOME_INTERESTED           = "interested"
+OUTCOME_NOT_INTERESTED       = "not_interested"
+OUTCOME_BUSY                 = "busy"
+OUTCOME_EXISTING_QUERY       = "existing_query"
 
 # ── Pickup slot names ──────────────────────────────────────────────────────
 SLOT_MORNING    = "morning"

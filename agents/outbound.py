@@ -15,14 +15,16 @@ from livekit.agents.llm import function_tool
 from agents.base import MuftyKareBaseAgent
 from tools.booking import reschedule_slot
 from tools.status import get_bill
+from tools.campaign import log_campaign_outcome
 from prompts.outbound import (
     OUTBOUND_REMINDER_PROMPT,
     OUTBOUND_DELIVERY_PROMPT,
     OUTBOUND_PAYMENT_PROMPT,
+    OUTBOUND_PROSPECTING_PROMPT,
 )
 from config.constants import (
     AGENT_BOOKING, AGENT_COMPLAINT,
-    CALL_TYPE_REMINDER, CALL_TYPE_DELIVERY, CALL_TYPE_PAYMENT,
+    CALL_TYPE_REMINDER, CALL_TYPE_DELIVERY, CALL_TYPE_PAYMENT, CALL_TYPE_PROSPECTING,
     OUTCOME_MISSED,
 )
 from userdata import MuftyKareUserData
@@ -33,10 +35,37 @@ RunCtx = RunContext[MuftyKareUserData]
 
 # Prompt map by call type
 _PROMPT_MAP = {
-    CALL_TYPE_REMINDER: OUTBOUND_REMINDER_PROMPT,
-    CALL_TYPE_DELIVERY: OUTBOUND_DELIVERY_PROMPT,
-    CALL_TYPE_PAYMENT:  OUTBOUND_PAYMENT_PROMPT,
+    CALL_TYPE_REMINDER:    OUTBOUND_REMINDER_PROMPT,
+    CALL_TYPE_DELIVERY:    OUTBOUND_DELIVERY_PROMPT,
+    CALL_TYPE_PAYMENT:     OUTBOUND_PAYMENT_PROMPT,
+    CALL_TYPE_PROSPECTING: OUTBOUND_PROSPECTING_PROMPT,
 }
+
+_DRY_CLEAN_OPENER_TE = (
+    "నమస్కారం {name} గారూ! MuftyKare నుండి Kavya మాట్లాడుతున్నాను. "
+    "మీరు మాతో Dry Cleaning చేశారు — మళ్ళీ ఈ వారం అవసరమా?"
+)
+_NO_DRY_CLEAN_OPENER_TE = (
+    "నమస్కారం {name} గారూ! MuftyKare నుండి Kavya మాట్లాడుతున్నాను. "
+    "మీరు మాతో Regular Wash చేస్తున్నారు — మీకు Dry Cleaning గురించి చెప్పనా?"
+)
+_DRY_CLEAN_OPENER_EN = (
+    "Hello {name}! This is Kavya from MuftyKare. "
+    "You've used our Dry Cleaning service before — do you need it again this week?"
+)
+_NO_DRY_CLEAN_OPENER_EN = (
+    "Hello {name}! This is Kavya from MuftyKare. "
+    "You've been using our regular wash service — can I tell you about our Dry Cleaning service?"
+)
+
+
+def _build_prospecting_opener(customer_context: dict, is_english: bool) -> str:
+    name = customer_context.get("name") or ("there" if is_english else "గారూ")
+    if customer_context.get("has_used_dry_cleaning"):
+        template = _DRY_CLEAN_OPENER_EN if is_english else _DRY_CLEAN_OPENER_TE
+    else:
+        template = _NO_DRY_CLEAN_OPENER_EN if is_english else _NO_DRY_CLEAN_OPENER_TE
+    return template.format(name=name)
 
 
 class OutboundAgent(MuftyKareBaseAgent):
@@ -45,14 +74,26 @@ class OutboundAgent(MuftyKareBaseAgent):
     Prompt selected at construction time based on call_type from userdata.
     """
 
-    def __init__(self, call_type: str = CALL_TYPE_REMINDER) -> None:
+    def __init__(
+        self,
+        call_type: str = CALL_TYPE_REMINDER,
+        customer_context: dict | None = None,
+    ) -> None:
         prompt = _PROMPT_MAP.get(call_type, OUTBOUND_REMINDER_PROMPT)
+        tools = [reschedule_slot, get_bill]
+
+        if call_type == CALL_TYPE_PROSPECTING:
+            from prompts.shared import _IS_ENGLISH
+            ctx = customer_context or {}
+            prompt = prompt.format(
+                opening_line=_build_prospecting_opener(ctx, _IS_ENGLISH),
+                address=ctx.get("address") or ("your address" if _IS_ENGLISH else "మీ address"),
+            )
+            tools = [reschedule_slot, log_campaign_outcome]
+
         super().__init__(
             instructions=prompt,
-            tools=[
-                reschedule_slot,
-                get_bill,
-            ],
+            tools=tools,
         )
         self.call_type = call_type
 

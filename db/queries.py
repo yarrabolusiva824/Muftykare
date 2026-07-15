@@ -54,6 +54,38 @@ async def fetch_customer_by_phone(
     return result
 
 
+async def fetch_outbound_customer_context(
+    pool: asyncpg.Pool,
+    phone: str,
+) -> dict[str, Any] | None:
+    """
+    Fetch customer context for an outbound prospecting call.
+
+    Returns dict with keys: id, name, address, total_orders, last_order_date,
+    pending_amount, has_used_dry_cleaning. Returns None if the phone number
+    isn't a known customer.
+    """
+    masked = f"****{phone[-4:]}" if len(phone) >= 4 else "****"
+    logger.debug("fetch_outbound_customer_context", extra={"phone": masked})
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(QUERIES["get_outbound_customer_context"], phone)
+
+    if not row:
+        logger.info("outbound customer not found", extra={"phone": masked})
+        return None
+
+    result = dict(row)
+    logger.info(
+        "outbound customer context fetched",
+        extra={
+            "customer_id": result["id"],
+            "has_used_dry_cleaning": result.get("has_used_dry_cleaning", False),
+        },
+    )
+    return result
+
+
 async def insert_customer(
     pool: asyncpg.Pool,
     name: str,

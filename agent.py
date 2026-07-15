@@ -20,6 +20,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 # ── Standard imports ────────────────────────────────────────────────────────
+import json
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -55,6 +56,7 @@ from agents import (
 )
 from config.constants import (
     DIRECTION_INBOUND,
+    DIRECTION_OUTBOUND,
     SIP_ATTR_PHONE,
     SIP_ATTR_CALL_ID,
     SARVAM_STT_MODEL,
@@ -65,6 +67,8 @@ from config.constants import (
     LLM_MODEL,
     USER_AWAY_TIMEOUT_SECS,
     CALL_TYPE_REMINDER,
+    CALL_TYPE_PROSPECTING,
+    AGENT_OUTBOUND,
 )
 
 # ── Agent map for TEST_AGENT selection ──────────────────────────────────────
@@ -147,7 +151,18 @@ async def entrypoint(ctx: JobContext) -> None:
     # ── 1. Create DB pool ───────────────────────────────────────────────────
     db_pool = await create_pool()
 
+    # ── 1b. Parse dispatch metadata (set by outbound_campaign.py for prospecting calls) ──
+    _dispatch_metadata: dict = {}
+    try:
+        if ctx.job.metadata:
+            _dispatch_metadata = json.loads(ctx.job.metadata)
+    except Exception as e:
+        logger.warning("failed to parse job metadata", extra={"error": str(e)})
+
+    _is_prospecting = _dispatch_metadata.get("call_type") == CALL_TYPE_PROSPECTING
+
     # ── 2. Determine starting agent ─────────────────────────────────────────
+    # Prospecting: driven by dispatch metadata, not TEST_AGENT
     # Dev: read TEST_AGENT from .env to test individual agents
     # Production: always GreeterAgent
     agent_name = os.getenv("TEST_AGENT", "greeter").lower().strip()
@@ -156,32 +171,46 @@ async def entrypoint(ctx: JobContext) -> None:
     # Log which agent is starting
     logger.info(
         "starting agent",
-        extra={"agent": AgentClass.__name__, "room": ctx.room.name},
+        extra={"agent": "OutboundAgent(prospecting)" if _is_prospecting else AgentClass.__name__, "room": ctx.room.name},
     )
-    print(f"\n>>> MuftyKare: {AgentClass.__name__} <<<\n")
+    print(f"\n>>> MuftyKare: {'OutboundAgent(prospecting)' if _is_prospecting else AgentClass.__name__} <<<\n")
 
-    # ── 3. Extract SIP phone number (production inbound calls) ──────────────
-    # In dev/Agent Console mode: no SIP participant, phone stays None
-    # In production: wait for SIP participant to join, extract phone
+    # ── 3. Determine caller phone ────────────────────────────────────────────
+    # Prospecting: phone comes from dispatch metadata (the customer is dialed
+    # separately via SIP after dispatch) — do not rely on SIP attributes.
+    # Inbound (dev/Agent Console + production): wait for SIP participant, extract phone.
     caller_phone = None
     call_id = ctx.room.name
 
-    participant = await ctx.wait_for_participant()
-
-    if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
-        caller_phone = participant.attributes.get(SIP_ATTR_PHONE, "")
-        call_id = participant.attributes.get(SIP_ATTR_CALL_ID, ctx.room.name)
+    if _is_prospecting:
+        caller_phone = _dispatch_metadata.get("customer_phone")
         logger.info(
-            "SIP participant joined",
-            extra={
-                "phone": f"****{caller_phone[-4:]}" if caller_phone else "unknown",
-                "call_id": call_id,
-            },
+            "prospecting call metadata",
+            extra={"phone": f"****{caller_phone[-4:]}" if caller_phone else "unknown"},
         )
+        await ctx.wait_for_participant()
+    else:
+        participant = await ctx.wait_for_participant()
+
+        if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
+            caller_phone = participant.attributes.get(SIP_ATTR_PHONE, "")
+            call_id = participant.attributes.get(SIP_ATTR_CALL_ID, ctx.room.name)
+            logger.info(
+                "SIP participant joined",
+                extra={
+                    "phone": f"****{caller_phone[-4:]}" if caller_phone else "unknown",
+                    "call_id": call_id,
+                },
+            )
 
     # ── 4. Silent customer lookup before agent speaks ───────────────────────
     customer = None
-    if caller_phone:
+    _prospecting_context = None
+    if _is_prospecting and caller_phone:
+        from db.queries import fetch_outbound_customer_context
+        _prospecting_context = await fetch_outbound_customer_context(db_pool, caller_phone)
+        customer = _prospecting_context
+    elif caller_phone:
         from db.queries import fetch_customer_by_phone
         customer = await fetch_customer_by_phone(db_pool, caller_phone)
 
@@ -189,16 +218,24 @@ async def entrypoint(ctx: JobContext) -> None:
     userdata = MuftyKareUserData(
         db_pool=db_pool,
         call_id=call_id,
-        call_direction=DIRECTION_INBOUND,
+        call_direction=DIRECTION_OUTBOUND if _is_prospecting else DIRECTION_INBOUND,
+        call_type=CALL_TYPE_PROSPECTING if _is_prospecting else None,
         caller_phone=caller_phone,
         customer_id=customer["id"] if customer else None,
-        customer_name=customer["name"] if customer else None,
+        customer_name=(customer["name"] if customer else None) or _dispatch_metadata.get("customer_name"),
         customer_address=customer.get("address") if customer else None,
         language=SARVAM_LANGUAGE,
     )
 
     # Pre-populate agents registry
-    userdata.agents = build_agent_registry()
+    if _is_prospecting:
+        userdata.agents = build_agent_registry(call_type=CALL_TYPE_PROSPECTING)
+        userdata.agents[AGENT_OUTBOUND] = OutboundAgent(
+            call_type=CALL_TYPE_PROSPECTING,
+            customer_context=_prospecting_context or {"name": userdata.customer_name},
+        )
+    else:
+        userdata.agents = build_agent_registry()
 
     logger.info(
         "userdata built",
@@ -216,7 +253,7 @@ async def entrypoint(ctx: JobContext) -> None:
             call_id=call_id,
             caller_phone=caller_phone,
             customer_id=userdata.customer_id,
-            direction=DIRECTION_INBOUND,
+            direction=DIRECTION_OUTBOUND if _is_prospecting else DIRECTION_INBOUND,
             language=SARVAM_LANGUAGE,
         )
         userdata.call_log_id = log_id
@@ -331,10 +368,10 @@ async def entrypoint(ctx: JobContext) -> None:
     background_audio = BackgroundAudioPlayer(ambient_sound=AudioConfig(_ambient_gen, volume=2.5),)
 
     # ── 11. Start session ───────────────────────────────────────────────────
-    starting_agent = AgentClass()
+    starting_agent = userdata.agents[AGENT_OUTBOUND] if _is_prospecting else AgentClass()
     logger.info(
         "session starting",
-        extra={"agent": AgentClass.__name__, "room": ctx.room.name},
+        extra={"agent": type(starting_agent).__name__, "room": ctx.room.name},
     )
 
     await session.start(agent=starting_agent, room=ctx.room, room_input_options=room_io.RoomInputOptions(
