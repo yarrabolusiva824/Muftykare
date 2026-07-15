@@ -306,7 +306,7 @@ async def entrypoint(ctx: JobContext) -> None:
             target_language_code=SARVAM_LANGUAGE,
             model=SARVAM_TTS_MODEL,
             speaker=SARVAM_TTS_SPEAKER,
-            min_buffer_size=20,
+            min_buffer_size=30,
         ),
 
         # TTS — OpenAI (testing only)
