@@ -378,12 +378,15 @@ BUSINESS_RULES = {
     "support_phone": "7075232425",
     "website": "muftykare.com",
     "working_hours": "Monday – Saturday, 10:00 AM – 7:00 PM",
-    "location": (
-        "Beside Vishnu Honda Balaji Hills,"
-        "NH-16, Balayya Sastri Layout, Seethammadhara, "
-        "Visakhapatnam"
-    ),
-    "maps_link": "https://maps.app.goo.gl/BmbSpo1FgXDwfaky9",
+    # TEMP: swapped for a US test location — revert to this once testing is done
+    # "location": (
+    #     "Beside Vishnu Honda Balaji Hills,"
+    #     "NH-16, Balayya Sastri Layout, Seethammadhara, "
+    #     "Visakhapatnam"
+    # ),
+    # "maps_link": "https://maps.app.goo.gl/BmbSpo1FgXDwfaky9",
+    "location": "123 Market Street, San Francisco, CA 94103",
+    "maps_link": "https://www.google.com/maps/search/?api=1&query=123+Market+Street+San+Francisco+CA+94103",
     "service_types": {
         "EXPRESS":   "Express Service — within 12 hours",
         "DRY_CLEAN": "Dry Cleaning — within 4 days",

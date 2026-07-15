@@ -115,7 +115,7 @@ COMPLAINT_MEDIUM_KEYWORDS = [
 ]
 
 # ── Agent persona ───────────────────────────────────────────────────────────
-AGENT_NAME              = "Kavya"          # spoken name used across all prompts
+AGENT_NAME              = "Nova"          # spoken name used across all prompts
 
 # ── Sarvam plugin config ────────────────────────────────────────────────────
 # "kavya" is a bulbul:v3 voice that speaks both te-IN and en-IN, so only the
