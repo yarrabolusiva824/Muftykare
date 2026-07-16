@@ -306,7 +306,7 @@ async def entrypoint(ctx: JobContext) -> None:
             target_language_code=SARVAM_LANGUAGE,
             model=SARVAM_TTS_MODEL,
             speaker=SARVAM_TTS_SPEAKER,
-            output_audio_codec="pcm",
+            output_audio_codec="mulaw",
         ),
 
         # TTS — OpenAI (testing only)
