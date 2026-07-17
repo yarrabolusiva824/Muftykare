@@ -95,81 +95,84 @@ class GreeterAgent(MuftyKareBaseAgent):
 
     # ── Transfer tools (handoff conditions) ──────────────────────────────
 
-    @function_tool
-    async def to_booking(self, context: RunCtx) -> tuple:
-        """
-        Transfer to BookingAgent when user wants to book, reschedule, or cancel a pickup.
-
-        Call when user expresses ANY of these:
-        - Wants a pickup: "pickup kavali", "laundry teeskovadam", "book cheskovadam"
-        - Mentions a service: "dry cleaning kavali", "express service", "shoe cleaning"
-        - Wants to reschedule: "slot change", "different time", "repu raakandi"
-        - Wants to cancel: "cancel chesandi", "inkaa raakandi"
-        - Any scheduling or appointment-related request
-
-        Telugu triggers: "pickup", "babbulu teeskovadam", "wash", "dry clean",
-        "express", "slot", "book", "schedule", "cancel pickup"
-        """
-        logger.info("agent:greeter → booking")
-        context.userdata.intent = INTENT_BOOKING
-        return await self._transfer_to_agent(AGENT_BOOKING, context)
-
-    @function_tool
-    async def to_status(self, context: RunCtx) -> tuple:
-        """
-        Transfer to StatusAgent when user wants to know about their order.
-
-        Call when user asks about:
-        - Order location: "babbulu ekkada", "order ekkada undi"
-        - Delivery timing: "eppudu vastaayi", "delivery eppudu"
-        - Order readiness: "ready ayyindaa", "complete ayyindaa"
-        - Bill/payment: "bill enta", "enta pay cheyyali", "payment chesaanu"
-        - Order status: "status enti", "order status"
-
-        IMPORTANT: If customer_id is NOT known yet, ask for phone number first,
-        call lookup_customer_by_number (NOT lookup_caller), THEN call this transfer tool.
-        Do NOT transfer before customer is identified.
-
-        Telugu triggers: "babbulu", "order", "bill", "payment", "status",
-        "delivery", "ready", "enta", "ekkada"
-        """
-        userdata = context.userdata
-
-        # Guard — must know who customer is
-        if not userdata.customer_id:
-            if _IS_ENGLISH:
-                return "Could you share your phone number? I'll check your account and give you the status."
-            return "మీ phone number చెప్పగలరా? మీ account check చేసి status చెప్తాను."
-
-        logger.info("agent:greeter → status")
-        context.userdata.intent = INTENT_STATUS
-        return await self._transfer_to_agent(AGENT_STATUS, context)
-
-    @function_tool
-    async def to_complaint(self, context: RunCtx) -> tuple:
-        """
-        Transfer to ComplaintAgent when user has ANY complaint or quality issue.
-
-        Call IMMEDIATELY when user mentions:
-        - Damage: "damage ayyindi", "torn", "fabric ruined"
-        - Missing: "piece ledu", "missing", "oka shirt raaledu"
-        - Wrong clothes: "wrong clothes", "veere vallu babbulu"
-        - Color issues: "colour poyyindi", "color bleed"
-        - Shrinkage: "shrink ayyindi", "size reduced"
-        - Quality: "stain poyindi kaadu", "smell undi", "button ledu"
-        - Delay frustration: "3 rojulu ayyindi", "chaaala late"
-        - Rude staff: "rude ga matladaadu"
-        - ANY expression of frustration about service quality
-
-        Do NOT investigate or ask questions — transfer immediately.
-        Do NOT attempt to resolve — ComplaintAgent handles that.
-
-        Telugu triggers: "damage", "missing", "stain", "colour", "wrong",
-        "shrink", "smell", "button", "rude", "late", "problem", "complaint"
-        """
-        logger.info("agent:greeter → complaint")
-        context.userdata.intent = INTENT_COMPLAINT
-        return await self._transfer_to_agent(AGENT_COMPLAINT, context)
+    # TEMP: agent switching disabled for greeter-only testing. Re-enable by
+    # un-commenting the @function_tool methods below.
+    #
+    # @function_tool
+    # async def to_booking(self, context: RunCtx) -> tuple:
+    #     """
+    #     Transfer to BookingAgent when user wants to book, reschedule, or cancel a pickup.
+    #
+    #     Call when user expresses ANY of these:
+    #     - Wants a pickup: "pickup kavali", "laundry teeskovadam", "book cheskovadam"
+    #     - Mentions a service: "dry cleaning kavali", "express service", "shoe cleaning"
+    #     - Wants to reschedule: "slot change", "different time", "repu raakandi"
+    #     - Wants to cancel: "cancel chesandi", "inkaa raakandi"
+    #     - Any scheduling or appointment-related request
+    #
+    #     Telugu triggers: "pickup", "babbulu teeskovadam", "wash", "dry clean",
+    #     "express", "slot", "book", "schedule", "cancel pickup"
+    #     """
+    #     logger.info("agent:greeter → booking")
+    #     context.userdata.intent = INTENT_BOOKING
+    #     return await self._transfer_to_agent(AGENT_BOOKING, context)
+    #
+    # @function_tool
+    # async def to_status(self, context: RunCtx) -> tuple:
+    #     """
+    #     Transfer to StatusAgent when user wants to know about their order.
+    #
+    #     Call when user asks about:
+    #     - Order location: "babbulu ekkada", "order ekkada undi"
+    #     - Delivery timing: "eppudu vastaayi", "delivery eppudu"
+    #     - Order readiness: "ready ayyindaa", "complete ayyindaa"
+    #     - Bill/payment: "bill enta", "enta pay cheyyali", "payment chesaanu"
+    #     - Order status: "status enti", "order status"
+    #
+    #     IMPORTANT: If customer_id is NOT known yet, ask for phone number first,
+    #     call lookup_customer_by_number (NOT lookup_caller), THEN call this transfer tool.
+    #     Do NOT transfer before customer is identified.
+    #
+    #     Telugu triggers: "babbulu", "order", "bill", "payment", "status",
+    #     "delivery", "ready", "enta", "ekkada"
+    #     """
+    #     userdata = context.userdata
+    #
+    #     # Guard — must know who customer is
+    #     if not userdata.customer_id:
+    #         if _IS_ENGLISH:
+    #             return "Could you share your phone number? I'll check your account and give you the status."
+    #         return "మీ phone number చెప్పగలరా? మీ account check చేసి status చెప్తాను."
+    #
+    #     logger.info("agent:greeter → status")
+    #     context.userdata.intent = INTENT_STATUS
+    #     return await self._transfer_to_agent(AGENT_STATUS, context)
+    #
+    # @function_tool
+    # async def to_complaint(self, context: RunCtx) -> tuple:
+    #     """
+    #     Transfer to ComplaintAgent when user has ANY complaint or quality issue.
+    #
+    #     Call IMMEDIATELY when user mentions:
+    #     - Damage: "damage ayyindi", "torn", "fabric ruined"
+    #     - Missing: "piece ledu", "missing", "oka shirt raaledu"
+    #     - Wrong clothes: "wrong clothes", "veere vallu babbulu"
+    #     - Color issues: "colour poyyindi", "color bleed"
+    #     - Shrinkage: "shrink ayyindi", "size reduced"
+    #     - Quality: "stain poyindi kaadu", "smell undi", "button ledu"
+    #     - Delay frustration: "3 rojulu ayyindi", "chaaala late"
+    #     - Rude staff: "rude ga matladaadu"
+    #     - ANY expression of frustration about service quality
+    #
+    #     Do NOT investigate or ask questions — transfer immediately.
+    #     Do NOT attempt to resolve — ComplaintAgent handles that.
+    #
+    #     Telugu triggers: "damage", "missing", "stain", "colour", "wrong",
+    #     "shrink", "smell", "button", "rude", "late", "problem", "complaint"
+    #     """
+    #     logger.info("agent:greeter → complaint")
+    #     context.userdata.intent = INTENT_COMPLAINT
+    #     return await self._transfer_to_agent(AGENT_COMPLAINT, context)
 
     @function_tool
     async def to_human(self, context: RunCtx) -> None:
