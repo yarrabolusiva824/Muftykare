@@ -24,7 +24,7 @@ import json
 import os
 from dotenv import load_dotenv
 load_dotenv()
-
+from livekit.plugins import deepgram, cartesia
 # ── LiveKit imports ─────────────────────────────────────────────────────────
 from livekit import rtc
 from livekit import api as lkapi
@@ -287,12 +287,17 @@ async def entrypoint(ctx: JobContext) -> None:
         # STT — Sarvam Saaras v3, Telugu primary
         # flush_signal=True is MANDATORY for Sarvam turn detection
         # Do NOT add vad= — Sarvam handles VAD internally
-        stt=sarvam.STT(
-            model=SARVAM_STT_MODEL,
-            language=SARVAM_LANGUAGE,
-            mode="transcribe",
-            flush_signal=True,
-        ),
+        # stt=sarvam.STT(
+        #     model=SARVAM_STT_MODEL,
+        #     language=SARVAM_LANGUAGE,
+        #     mode="transcribe",
+        #     flush_signal=True,
+        # ),
+
+        stt=deepgram.STT(
+    model="nova-3",
+    language="en-US",
+),
 
         # LLM — GPT-4o, parallel_tool_calls=False for voice reliability
         llm=lk_openai.LLM(
@@ -302,12 +307,18 @@ async def entrypoint(ctx: JobContext) -> None:
 
         # TTS — Sarvam Bulbul v3, Telugu female voice
         # TEMP: swapped for OpenAI TTS for testing — restore this once testing is done
-        tts=sarvam.TTS(
-            target_language_code=SARVAM_LANGUAGE,
-            model=SARVAM_TTS_MODEL,
-            speaker=SARVAM_TTS_SPEAKER,
-            output_audio_codec="mulaw",
-        ),
+        # tts=sarvam.TTS(
+        #     target_language_code=SARVAM_LANGUAGE,
+        #     model=SARVAM_TTS_MODEL,
+        #     speaker=SARVAM_TTS_SPEAKER,
+        #     output_audio_codec="mulaw",
+        # ),
+
+        tts=cartesia.TTS(
+    model="sonic-2",
+    voice="79a125e8-cd45-4c13-8a67-188112f4dd22",  # British lady — change to preferred
+    language="en",
+),
 
         # TTS — OpenAI (testing only)
         # tts=lk_openai.TTS(
