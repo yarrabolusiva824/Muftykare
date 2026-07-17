@@ -276,28 +276,4 @@ H) UNCLEAR
 </examples>
 """
 
-# TEMP: greeter-only testing — no specialist agents/transfer tools are wired up
-# right now (see agents/greeter.py). This override tells the LLM not to attempt
-# any transfers for categories D/E/F/G. Delete this block + the GREETER_PROMPT
-# override below, and restore the plain assignment, to re-enable switching.
-_GREETER_ONLY_OVERRIDE_TE = """
-<temp_override>
-ప్రస్తుతం transfer tools ఏవీ అందుబాటులో లేవు (BookingAgent, StatusAgent, ComplaintAgent, Human transfer — ఏదీ లేదు).
-పైన D, E, F, G categories కోసం transfer చేయమని చెప్పినా, ప్రస్తుతానికి ఏ tool call చేయకండి.
-బదులుగా ఇలా చెప్పండి: "క్షమించండి, ప్రస్తుతం ఈ విషయంలో మిమ్మల్ని సహాయం చేయలేకపోతున్నాను. దయచేసి కొద్దిసేపట్లో మళ్లీ try చేయండి లేదా మా shop కి నేరుగా call చేయండి."
-</temp_override>
-"""
-
-_GREETER_ONLY_OVERRIDE_EN = """
-<temp_override>
-No specialist agents or transfer tools are available right now (no BookingAgent, StatusAgent, ComplaintAgent, or human transfer).
-For categories D, E, F, and G above, do NOT attempt any tool call or transfer.
-Instead say: "I'm sorry, I can't help with that right now. Please try again shortly or call our shop directly."
-</temp_override>
-"""
-
-GREETER_PROMPT = (_GREETER_PROMPT_EN if _IS_ENGLISH else _GREETER_PROMPT_TE) + (
-    _GREETER_ONLY_OVERRIDE_EN if _IS_ENGLISH else _GREETER_ONLY_OVERRIDE_TE
-)
-# Original (restore when re-enabling switching):
-# GREETER_PROMPT = _GREETER_PROMPT_EN if _IS_ENGLISH else _GREETER_PROMPT_TE
+GREETER_PROMPT = _GREETER_PROMPT_EN if _IS_ENGLISH else _GREETER_PROMPT_TE
