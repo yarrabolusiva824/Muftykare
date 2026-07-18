@@ -11,9 +11,13 @@ Two LiveKit room connections are used (see PlivoBridge._start_agent):
     audio as a track. RoomIO only ever treats a *remote* participant's
     track as input, so this must be a separate identity from the agent's.
   - self._agent_room, identity "agent-*", is passed as room= to
-    AgentSession.start() and is what RoomIO/BVCTelephony/BackgroundAudioPlayer
-    /Egress all operate on. TTS output still goes through PlivoAudioOutput
-    (not RoomIO's own audio output track) straight to Plivo.
+    AgentSession.start() and is what RoomIO/BVCTelephony/Egress all operate
+    on. TTS output still goes through PlivoAudioOutput (not RoomIO's own
+    audio output track) straight to Plivo. Ambient office noise is mixed
+    directly into TTS frames in PlivoAudioOutput.capture_frame — a track
+    published on self._agent_room (e.g. via BackgroundAudioPlayer) is never
+    subscribed to by anything in the Plivo path, so it would never reach
+    the caller.
 
 NOTE: GreeterAgent.to_human / _warm_transfer() (agents/base.py) still cannot
 merge a human manager into the call on this path. WarmTransferTask calls
@@ -31,9 +35,10 @@ import json
 import time
 import traceback
 
+import numpy as np
 from fastapi import WebSocket
 from livekit import rtc
-from livekit.agents import AgentSession, BackgroundAudioPlayer, AudioConfig, BuiltinAudioClip
+from livekit.agents import AgentSession, BuiltinAudioClip
 from livekit.agents.voice import io as agent_io, room_io
 from livekit.api import AccessToken, VideoGrants
 from livekit.plugins import sarvam
@@ -45,7 +50,7 @@ from db.connection import create_pool, close_pool
 from db.queries import fetch_customer_by_phone, log_call_start, log_call_end
 from userdata import MuftyKareUserData
 from agents import build_agent_registry, GreeterAgent
-from audio_cache import make_ambient_generator
+from audio_cache import _get_cached_frames
 from agent import start_call_recording, stop_call_recording
 from config.settings import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 from config.constants import (
@@ -61,6 +66,22 @@ PLIVO_SAMPLE_RATE = 8000    # Plivo sends/receives mulaw at 8kHz
 AGENT_SAMPLE_RATE = 16000   # Sarvam STT expects 16kHz PCM
 
 
+async def _load_ambient_pcm(file_path: str, target_sample_rate: int) -> "np.ndarray | None":
+    """
+    Pre-decode an ambient audio file (via the shared frame cache) into a single
+    continuous int16 PCM buffer at target_sample_rate, for cheap in-place
+    mixing into TTS frames — no per-call decode or resample work.
+    """
+    frames = await _get_cached_frames(file_path)
+    if not frames:
+        return None
+    raw = b"".join(bytes(f.data) for f in frames)
+    src_rate = frames[0].sample_rate
+    if src_rate != target_sample_rate:
+        raw, _ = audioop.ratecv(raw, 2, 1, src_rate, target_sample_rate, None)
+    return np.frombuffer(raw, dtype=np.int16)
+
+
 # ── Custom AudioOutput — captures TTS frames, enqueues mulaw for Plivo ─────
 
 class PlivoAudioOutput(agent_io.AudioOutput):
@@ -73,9 +94,17 @@ class PlivoAudioOutput(agent_io.AudioOutput):
     without them wait_for_playout() (used for interruption handling) hangs
     forever. Playout completion here is approximated as "handed off to the
     Plivo send queue" since Plivo gives us no playback ack.
+
+    Ambient office noise (if provided) is mixed directly into each TTS frame
+    here, since this is the only audio path that actually reaches the Plivo
+    caller — see the module docstring.
     """
 
-    def __init__(self, mulaw_queue: "asyncio.Queue[bytes]") -> None:
+    def __init__(
+        self,
+        mulaw_queue: "asyncio.Queue[bytes]",
+        ambient_pcm: "np.ndarray | None" = None,
+    ) -> None:
         super().__init__(
             label="plivo_output",
             sample_rate=AGENT_SAMPLE_RATE,
@@ -86,12 +115,33 @@ class PlivoAudioOutput(agent_io.AudioOutput):
         self._interrupted = asyncio.Event()
         self._flush_task: asyncio.Task | None = None
         self._flush_time: float = 0.0  # monotonic timestamp when flush() was called
+        self._ambient_pcm = ambient_pcm if ambient_pcm is not None and len(ambient_pcm) else None
+        self._ambient_pos = 0
+
+    def _mix_ambient(self, pcm_bytes: bytes) -> bytes:
+        """Overlay the next slice of the looping ambient buffer onto pcm_bytes."""
+        tts = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+        n = len(tts)
+        amb_len = len(self._ambient_pcm)
+        start = self._ambient_pos
+        end = start + n
+        if end <= amb_len:
+            bg = self._ambient_pcm[start:end]
+        else:
+            bg = np.concatenate([self._ambient_pcm[start:], self._ambient_pcm[: end - amb_len]])
+        self._ambient_pos = end % amb_len
+
+        mixed = np.clip(tts + bg.astype(np.float32) * 0.3, -32768, 32767).astype(np.int16)
+        return mixed.tobytes()
 
     async def capture_frame(self, frame: rtc.AudioFrame) -> None:
         """Called by the TTS pipeline for each audio frame."""
         await super().capture_frame(frame)
 
         pcm_bytes = bytes(frame.data)
+        if self._ambient_pcm is not None:
+            pcm_bytes = self._mix_ambient(pcm_bytes)
+
         if frame.sample_rate != PLIVO_SAMPLE_RATE:
             pcm_8k, _ = audioop.ratecv(
                 pcm_bytes, 2, 1, frame.sample_rate, PLIVO_SAMPLE_RATE, None
@@ -183,7 +233,6 @@ class PlivoBridge:
         self._caller_room: rtc.Room | None = None
         self._agent_room: rtc.Room | None = None
         self._audio_source: rtc.AudioSource | None = None
-        self._background_audio: BackgroundAudioPlayer | None = None
         self._egress_id: str | None = None
         self._audio_out_queue: "asyncio.Queue[bytes]" = asyncio.Queue(maxsize=200)
         self._intent: str | None = None
@@ -295,7 +344,10 @@ class PlivoBridge:
                 caller_track = rtc.LocalAudioTrack.create_audio_track(
                     "plivo-caller", self._audio_source
                 )
-                await self._caller_room.local_participant.publish_track(caller_track)
+                await self._caller_room.local_participant.publish_track(
+                    caller_track,
+                    rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE),
+                )
 
                 # ── Connect the agent's own room identity ─────────────────────
                 self._agent_room = rtc.Room()
@@ -304,10 +356,79 @@ class PlivoBridge:
                 )
                 await self._agent_room.connect(LIVEKIT_URL, agent_token)
 
+                # ── Diagnostic: confirm the caller's track reaches this room ──
+                @self._agent_room.on("track_subscribed")
+                def on_track_subscribed(track, pub, participant) -> None:
+                    logger.info(
+                        "track subscribed in agent room",
+                        extra={
+                            "call_uuid": self.call_uuid,
+                            "identity": participant.identity,
+                            "track_kind": str(track.kind),
+                            "track_sid": track.sid,
+                            "publication_source": rtc.TrackSource.Name(pub.source),
+                            "publication_subscribed": pub.subscribed,
+                            "publication_muted": pub.muted,
+                        },
+                    )
+
+                    # Raw frame-count probe — bypasses RoomIO entirely to prove
+                    # whether audio frames are actually arriving over the wire.
+                    async def _probe_frames() -> None:
+                        probe_stream = rtc.AudioStream.from_track(
+                            track=track, sample_rate=AGENT_SAMPLE_RATE, num_channels=1
+                        )
+                        count = 0
+                        async for _ in probe_stream:
+                            count += 1
+                            if count == 1:
+                                logger.info(
+                                    "probe: first raw frame received",
+                                    extra={"call_uuid": self.call_uuid},
+                                )
+                            if count >= 100:
+                                break
+                        logger.info(
+                            "probe: frame count after 100-frame window (or stream end)",
+                            extra={"call_uuid": self.call_uuid, "frames": count},
+                        )
+                        await probe_stream.aclose()
+
+                    asyncio.create_task(_probe_frames())
+
+                @self._agent_room.on("participant_connected")
+                def on_participant_connected(participant) -> None:
+                    logger.info(
+                        "participant connected to agent room",
+                        extra={
+                            "call_uuid": self.call_uuid,
+                            "identity": participant.identity,
+                            "kind": str(participant.kind),
+                        },
+                    )
+
+                logger.info(
+                    "agent room participants before start",
+                    extra={
+                        "call_uuid": self.call_uuid,
+                        "count": len(self._agent_room.remote_participants),
+                        "identities": [
+                            p.identity for p in self._agent_room.remote_participants.values()
+                        ],
+                    },
+                )
+
                 # Build custom TTS output — RoomIO's own audio output is
                 # disabled automatically once session.output.audio is set
-                # before start() (see AgentSession.start()).
-                audio_output = PlivoAudioOutput(self._audio_out_queue)
+                # before start() (see AgentSession.start()). Ambient office
+                # noise is pre-decoded here and mixed directly into TTS
+                # frames in PlivoAudioOutput.capture_frame — see module
+                # docstring for why a room-published ambient track can't
+                # reach the Plivo caller.
+                ambient_pcm = await _load_ambient_pcm(
+                    BuiltinAudioClip.OFFICE_AMBIENCE.path(), AGENT_SAMPLE_RATE
+                )
+                audio_output = PlivoAudioOutput(self._audio_out_queue, ambient_pcm=ambient_pcm)
 
                 self._session = AgentSession[MuftyKareUserData](
                     userdata=userdata,
@@ -343,15 +464,6 @@ class PlivoBridge:
                     ),
                 )
                 self._session.output.set_audio_enabled(True)
-
-                # Background ambient audio — needs a real room.
-                ambient_gen = await make_ambient_generator(BuiltinAudioClip.OFFICE_AMBIENCE.path())
-                self._background_audio = BackgroundAudioPlayer(
-                    ambient_sound=AudioConfig(ambient_gen, volume=2.5),
-                )
-                await self._background_audio.start(
-                    room=self._agent_room, agent_session=self._session
-                )
 
                 # Egress recording — fire-and-forget, don't block session start.
                 async def _start_recording_bg() -> None:
@@ -515,12 +627,6 @@ class PlivoBridge:
         order_id = self._order_id
         # session.aclose() was already called inside _start_agent's finally block
         # (while the http_context was still alive) — do not call it again here.
-
-        if self._background_audio:
-            try:
-                await self._background_audio.aclose()
-            except Exception as e:
-                logger.debug("background audio aclose error", extra={"error": str(e)})
 
         if self._egress_id:
             try:
