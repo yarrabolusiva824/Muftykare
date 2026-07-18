@@ -22,6 +22,8 @@ logger = get_logger(__name__)
 # ── Standard imports ────────────────────────────────────────────────────────
 import json
 import os
+import time
+from dataclasses import dataclass, field
 from dotenv import load_dotenv
 load_dotenv()
 from livekit.plugins import deepgram, cartesia
@@ -129,6 +131,58 @@ async def stop_call_recording(egress_id: str) -> None:
                 pass
 
 
+# ── Call latency tracker ────────────────────────────────────────────────────
+@dataclass
+class CallTimings:
+    call_start: float = field(default_factory=time.perf_counter)
+    participant_joined: float | None = None
+    customer_lookup_start: float | None = None
+    customer_lookup_end: float | None = None
+    db_pool_created: float | None = None
+    session_start: float | None = None
+    stt_connected: float | None = None
+    first_transcript: float | None = None
+    llm_start: float | None = None
+    llm_first_token: float | None = None
+    tts_start: float | None = None
+    tts_first_audio: float | None = None
+    first_audio_played: float | None = None
+
+    def log_summary(self, logger, room: str) -> None:
+        """Log a full latency breakdown after first audio plays."""
+        def ms(start, end) -> str:
+            if start is None or end is None:
+                return "N/A"
+            return f"{(end - start) * 1000:.0f}ms"
+
+        ref = self.call_start
+        def since(t) -> str:
+            if t is None:
+                return "N/A"
+            return f"{(t - ref) * 1000:.0f}ms"
+
+        logger.info(
+            "call latency breakdown",
+            extra={
+                "room": room,
+                "participant_joined_at":     since(self.participant_joined),
+                "db_pool_ready_at":          since(self.db_pool_created),
+                "customer_lookup":           ms(self.customer_lookup_start, self.customer_lookup_end),
+                "customer_lookup_done_at":   since(self.customer_lookup_end),
+                "session_start_at":          since(self.session_start),
+                "stt_connected_at":          since(self.stt_connected),
+                "first_transcript_at":       since(self.first_transcript),
+                "llm_start_at":              since(self.llm_start),
+                "llm_first_token_at":        since(self.llm_first_token),
+                "llm_ttft":                  ms(self.llm_start, self.llm_first_token),
+                "tts_start_at":              since(self.tts_start),
+                "tts_first_audio_at":        since(self.tts_first_audio),
+                "tts_latency":               ms(self.tts_start, self.tts_first_audio),
+                "total_to_first_audio":      since(self.first_audio_played),
+            }
+        )
+
+
 # ── AgentServer ─────────────────────────────────────────────────────────────
 server = AgentServer()
 
@@ -147,9 +201,11 @@ async def entrypoint(ctx: JobContext) -> None:
     6. Register shutdown callback to close pool + log call end
     """
     logger.info("entrypoint called", extra={"room": ctx.room.name})
+    timings = CallTimings()
 
     # ── 1. Create DB pool ───────────────────────────────────────────────────
     db_pool = await create_pool()
+    timings.db_pool_created = time.perf_counter()
 
     # ── 1b. Parse dispatch metadata (set by outbound_campaign.py for prospecting calls) ──
     _dispatch_metadata: dict = {}
@@ -189,8 +245,10 @@ async def entrypoint(ctx: JobContext) -> None:
             extra={"phone": f"****{caller_phone[-4:]}" if caller_phone else "unknown"},
         )
         await ctx.wait_for_participant()
+        timings.participant_joined = time.perf_counter()
     else:
         participant = await ctx.wait_for_participant()
+        timings.participant_joined = time.perf_counter()
 
         if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
             caller_phone = participant.attributes.get(SIP_ATTR_PHONE, "")
@@ -208,11 +266,15 @@ async def entrypoint(ctx: JobContext) -> None:
     _prospecting_context = None
     if _is_prospecting and caller_phone:
         from db.queries import fetch_outbound_customer_context
+        timings.customer_lookup_start = time.perf_counter()
         _prospecting_context = await fetch_outbound_customer_context(db_pool, caller_phone)
+        timings.customer_lookup_end = time.perf_counter()
         customer = _prospecting_context
     elif caller_phone:
         from db.queries import fetch_customer_by_phone
+        timings.customer_lookup_start = time.perf_counter()
         customer = await fetch_customer_by_phone(db_pool, caller_phone)
+        timings.customer_lookup_end = time.perf_counter()
 
     # ── 5. Build MuftyKareUserData ──────────────────────────────────────────
     userdata = MuftyKareUserData(
@@ -327,7 +389,11 @@ async def entrypoint(ctx: JobContext) -> None:
     # ── 8. Transcript logging ───────────────────────────────────────────────
     @session.on("user_input_transcribed")
     def on_transcript(event):
+        if timings.stt_connected is None:
+            timings.stt_connected = time.perf_counter()
         if event.is_final:
+            if timings.first_transcript is None:
+                timings.first_transcript = time.perf_counter()
             logger.info(
                 "transcript",
                 extra={"text": event.transcript, "room": ctx.room.name},
@@ -375,6 +441,7 @@ async def entrypoint(ctx: JobContext) -> None:
         extra={"agent": type(starting_agent).__name__, "room": ctx.room.name},
     )
 
+    timings.session_start = time.perf_counter()
     await session.start(agent=starting_agent, room=ctx.room, room_input_options=room_io.RoomInputOptions(
         noise_cancellation=noise_cancellation.BVCTelephony(),
     ),)
@@ -386,6 +453,20 @@ async def entrypoint(ctx: JobContext) -> None:
         "session started",
         extra={"agent": AgentClass.__name__, "room": ctx.room.name},
     )
+
+    # ── Latency tracking event hooks ─────────────────────────────────────────
+    @session.on("agent_state_changed")
+    def on_state_changed(event):
+        if event.state == "thinking" and timings.llm_start is None:
+            timings.llm_start = time.perf_counter()
+
+    @session.on("agent_speech_started")
+    def on_speech_started(event):
+        if timings.tts_first_audio is None:
+            timings.tts_first_audio = time.perf_counter()
+        if timings.first_audio_played is None:
+            timings.first_audio_played = time.perf_counter()
+            timings.log_summary(logger, ctx.room.name)
 
 
 if __name__ == "__main__":
