@@ -189,7 +189,6 @@ class PlivoBridge:
                 })
                 self._agent_start_task = asyncio.create_task(self._start_agent())
                 self._send_task = asyncio.create_task(self._send_audio_to_plivo())
-                asyncio.create_task(self._send_hold_silence())
 
             elif ev_type == "media":
                 payload = event.get("media", {}).get("payload", "")
@@ -299,27 +298,29 @@ class PlivoBridge:
                     extra={"call_uuid": self.call_uuid},
                 )
 
-    async def _send_hold_silence(self) -> None:
-        """
-        Send mulaw silence to Plivo every 20ms while agent is initializing.
-        Keeps Plivo from dropping the connection during the 5-6s agent startup.
-        mulaw silence byte is 0xFF (127 in linear = silence in G.711 u-law).
-        """
-        silence_chunk = b'\xff' * 160  # 160 bytes = 20ms at 8kHz
-        while not self._closed and not self._agent_ready:
-            try:
-                self._audio_out_queue.put_nowait(silence_chunk)
-            except asyncio.QueueFull:
-                pass
-            await asyncio.sleep(0.02)
-
     async def _send_audio_to_plivo(self) -> None:
-        """Drain outbound mulaw queue and send back to Plivo."""
+        """
+        Drain outbound mulaw queue and send back to Plivo.
+        During agent initialization, inject one 20ms silence frame per timeout
+        cycle to keep Plivo's WebSocket alive — properly paced, no burst.
+        mulaw silence byte is 0xFF (silence in G.711 u-law).
+        """
+        silence_chunk = b'\xff' * 160  # 20ms of G.711 u-law silence at 8kHz
         while not self._closed:
             try:
                 mulaw_bytes = await asyncio.wait_for(
-                    self._audio_out_queue.get(), timeout=0.1
+                    self._audio_out_queue.get(), timeout=0.02  # 20ms
                 )
+            except asyncio.TimeoutError:
+                if not self._agent_ready:
+                    # Inject one silence frame per 20ms cycle during startup.
+                    # This keeps Plivo's WebSocket alive without pre-loading a
+                    # burst of silence frames that Plivo would queue and play
+                    # back over several seconds, delaying real TTS audio.
+                    mulaw_bytes = silence_chunk
+                else:
+                    continue
+            try:
                 payload = base64.b64encode(mulaw_bytes).decode()
                 await self.websocket.send_json({
                     "event": "playAudio",
@@ -329,8 +330,6 @@ class PlivoBridge:
                         "payload": payload,
                     }
                 })
-            except asyncio.TimeoutError:
-                continue
             except Exception:
                 break
 
