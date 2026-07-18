@@ -20,6 +20,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 # ── Standard imports ────────────────────────────────────────────────────────
+import asyncio
 import json
 import os
 import time
@@ -40,6 +41,7 @@ from livekit.agents import (
     cli,
 )
 from livekit.plugins import sarvam
+from livekit.plugins.sarvam import STT as SarvamSTT, TTS as SarvamTTS
 from livekit.plugins import openai as lk_openai
 from livekit.plugins import noise_cancellation
 from livekit.agents.voice import room_io
@@ -183,6 +185,50 @@ class CallTimings:
         )
 
 
+async def prewarm_sarvam(stt_language: str = "unknown") -> None:
+    """
+    Open and immediately close Sarvam STT and TTS WebSockets to warm the
+    connection — so the real connections at session.start() are instant.
+    This runs during the ctx.connect() → wait_for_participant() window.
+    """
+    try:
+        import aiohttp
+        import os
+
+        api_key = os.getenv("SARVAM_API_KEY", "")
+        headers = {"api-subscription-key": api_key}
+
+        # Warm STT WebSocket
+        stt_url = (
+            f"wss://api.sarvam.ai/speech-to-text/ws"
+            f"?language-code={stt_language}&model=saaras:v3"
+            f"&vad_signals=true&sample_rate=16000&flush_signal=true&mode=transcribe"
+        )
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.ws_connect(
+                    stt_url, headers=headers, timeout=aiohttp.ClientTimeout(total=3)
+                ) as ws:
+                    await ws.close()
+                    logger.info("sarvam STT pre-warm done")
+            except Exception as e:
+                logger.debug("sarvam STT pre-warm skipped", extra={"reason": str(e)})
+
+            # Warm TTS WebSocket
+            tts_url = "wss://api.sarvam.ai/text-to-speech/ws"
+            try:
+                async with session.ws_connect(
+                    tts_url, headers=headers, timeout=aiohttp.ClientTimeout(total=3)
+                ) as ws:
+                    await ws.close()
+                    logger.info("sarvam TTS pre-warm done")
+            except Exception as e:
+                logger.debug("sarvam TTS pre-warm skipped", extra={"reason": str(e)})
+
+    except Exception as e:
+        logger.debug("sarvam pre-warm failed", extra={"error": str(e)})
+
+
 # ── AgentServer ─────────────────────────────────────────────────────────────
 server = AgentServer()
 
@@ -244,9 +290,13 @@ async def entrypoint(ctx: JobContext) -> None:
             "prospecting call metadata",
             extra={"phone": f"****{caller_phone[-4:]}" if caller_phone else "unknown"},
         )
+        # ── Pre-warm Sarvam connections during participant wait window ───────
+        asyncio.create_task(prewarm_sarvam(stt_language=SARVAM_LANGUAGE))
         await ctx.wait_for_participant()
         timings.participant_joined = time.perf_counter()
     else:
+        # ── Pre-warm Sarvam connections during participant wait window ───────
+        asyncio.create_task(prewarm_sarvam(stt_language=SARVAM_LANGUAGE))
         participant = await ctx.wait_for_participant()
         timings.participant_joined = time.perf_counter()
 
@@ -323,24 +373,31 @@ async def entrypoint(ctx: JobContext) -> None:
         # Non-fatal — don't crash the call if logging fails
         logger.warning("log_call_start failed", extra={"error": str(e)})
 
-    egress_id = None
-    # ── 6b. Start call recording ────────────────────────────────────────────
-    egress_id = await start_call_recording(ctx.room.name, call_id)
-    if egress_id:
-        logger.info("call recording started", extra={"egress_id": egress_id})
+    egress_id: str | None = None
 
-    # ── 6c. Log recording to DB ─────────────────────────────────────────────
-    if egress_id:
-        from db.queries import log_call_recording
-        await log_call_recording(
-            db_pool,
-            call_id=call_id,
-            customer_id=userdata.customer_id,
-            caller_phone=caller_phone,
-            egress_id=egress_id,
-            file_path=f"calls/{call_id}.ogg",
-            call_log_id=userdata.call_log_id,
-        )
+    # ── 6b. Start call recording (background — does not block session start) ─
+    async def _start_recording_bg() -> None:
+        nonlocal egress_id
+        _id = await start_call_recording(ctx.room.name, call_id)
+        if _id:
+            egress_id = _id
+            logger.info("call recording started", extra={"egress_id": _id})
+            # ── 6c. Log recording to DB ──────────────────────────────────────
+            try:
+                from db.queries import log_call_recording
+                await log_call_recording(
+                    db_pool,
+                    call_id=call_id,
+                    customer_id=userdata.customer_id,
+                    caller_phone=caller_phone,
+                    egress_id=_id,
+                    file_path=f"calls/{call_id}.ogg",
+                    call_log_id=userdata.call_log_id,
+                )
+            except Exception as e:
+                logger.warning("log_call_recording failed", extra={"error": str(e)})
+
+    asyncio.create_task(_start_recording_bg())
 
     # ── 7. Build AgentSession ───────────────────────────────────────────────
     session = AgentSession[MuftyKareUserData](
