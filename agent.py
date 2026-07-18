@@ -84,6 +84,9 @@ _AGENT_MAP = {
     "outbound":  OutboundAgent,
 }
 
+# ── Module-level pre-warm cache ─────────────────────────────────────────────
+_ambient_gen_cache: object | None = None
+
 async def start_call_recording(room_name: str, call_id: str) -> str | None:
     """Start LiveKit Egress recording to local MinIO. Returns egress_id or None on failure."""
     try:
@@ -229,6 +232,17 @@ async def prewarm_sarvam(stt_language: str = "unknown") -> None:
         logger.debug("sarvam pre-warm failed", extra={"error": str(e)})
 
 
+async def prewarm_ambient() -> None:
+    """Pre-decode the office ambience audio during the participant wait window."""
+    global _ambient_gen_cache
+    try:
+        _ambience_path = BuiltinAudioClip.OFFICE_AMBIENCE.path()
+        _ambient_gen_cache = await make_ambient_generator(_ambience_path)
+        logger.info("ambient audio pre-warm done")
+    except Exception as e:
+        logger.debug("ambient pre-warm failed", extra={"error": str(e)})
+
+
 # ── AgentServer ─────────────────────────────────────────────────────────────
 server = AgentServer()
 
@@ -290,13 +304,19 @@ async def entrypoint(ctx: JobContext) -> None:
             "prospecting call metadata",
             extra={"phone": f"****{caller_phone[-4:]}" if caller_phone else "unknown"},
         )
-        # ── Pre-warm Sarvam connections during participant wait window ───────
-        asyncio.create_task(prewarm_sarvam(stt_language=SARVAM_LANGUAGE))
+        # ── Pre-warm Sarvam + ambient during participant wait window ─────────
+        await asyncio.gather(
+            prewarm_sarvam(stt_language=SARVAM_LANGUAGE),
+            prewarm_ambient(),
+        )
         await ctx.wait_for_participant()
         timings.participant_joined = time.perf_counter()
     else:
-        # ── Pre-warm Sarvam connections during participant wait window ───────
-        asyncio.create_task(prewarm_sarvam(stt_language=SARVAM_LANGUAGE))
+        # ── Pre-warm Sarvam + ambient during participant wait window ─────────
+        await asyncio.gather(
+            prewarm_sarvam(stt_language=SARVAM_LANGUAGE),
+            prewarm_ambient(),
+        )
         participant = await ctx.wait_for_participant()
         timings.participant_joined = time.perf_counter()
 
@@ -485,11 +505,10 @@ async def entrypoint(ctx: JobContext) -> None:
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    # ── 10. Background audio — office ambience for entire call ──────────────
-    # ── 10. Background audio — decode once, create in-memory generator ──────────
-    _ambience_path = BuiltinAudioClip.OFFICE_AMBIENCE.path()
-    _ambient_gen = await make_ambient_generator(_ambience_path)
-    background_audio = BackgroundAudioPlayer(ambient_sound=AudioConfig(_ambient_gen, volume=2.5),)
+    # ── 10. Background audio — pre-decoded during participant wait window ────
+    background_audio = BackgroundAudioPlayer(
+        ambient_sound=AudioConfig(_ambient_gen_cache, volume=2.5),
+    )
 
     # ── 11. Start session ───────────────────────────────────────────────────
     starting_agent = userdata.agents[AGENT_OUTBOUND] if _is_prospecting else AgentClass()
@@ -497,6 +516,23 @@ async def entrypoint(ctx: JobContext) -> None:
         "session starting",
         extra={"agent": type(starting_agent).__name__, "room": ctx.room.name},
     )
+
+    # ── Latency tracking hooks — MUST be before session.start() ─────────────
+    # The agent fires agent_speech_started for its opening greeting immediately
+    # on session.start(). Handlers registered after miss that event, so
+    # first_audio_played is never set and log_summary never fires.
+    @session.on("agent_state_changed")
+    def on_state_changed(event):
+        if event.new_state == "thinking" and timings.llm_start is None:
+            timings.llm_start = time.perf_counter()
+
+    @session.on("agent_speech_started")
+    def on_speech_started(event):
+        if timings.tts_first_audio is None:
+            timings.tts_first_audio = time.perf_counter()
+        if timings.first_audio_played is None:
+            timings.first_audio_played = time.perf_counter()
+            timings.log_summary(logger, ctx.room.name)
 
     timings.session_start = time.perf_counter()
     await session.start(agent=starting_agent, room=ctx.room, room_input_options=room_io.RoomInputOptions(
@@ -510,20 +546,6 @@ async def entrypoint(ctx: JobContext) -> None:
         "session started",
         extra={"agent": AgentClass.__name__, "room": ctx.room.name},
     )
-
-    # ── Latency tracking event hooks ─────────────────────────────────────────
-    @session.on("agent_state_changed")
-    def on_state_changed(event):
-        if event.new_state == "thinking" and timings.llm_start is None:
-            timings.llm_start = time.perf_counter()
-
-    @session.on("agent_speech_started")
-    def on_speech_started(event):
-        if timings.tts_first_audio is None:
-            timings.tts_first_audio = time.perf_counter()
-        if timings.first_audio_played is None:
-            timings.first_audio_played = time.perf_counter()
-            timings.log_summary(logger, ctx.room.name)
 
 
 if __name__ == "__main__":
