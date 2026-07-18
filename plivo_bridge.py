@@ -56,6 +56,7 @@ class PlivoAudioInput(agent_io.AudioInput):
 
     def push_frame(self, frame: rtc.AudioFrame) -> None:
         """Non-blocking — called from the Plivo media event handler."""
+        logger.debug(f"push_frame — queue size: {self._queue.qsize()}")
         try:
             self._queue.put_nowait(frame)
         except asyncio.QueueFull:
@@ -310,6 +311,18 @@ class PlivoBridge:
                 self._agent_ready = True
                 t_session_ready = time.perf_counter()
                 logger.info("agent started", extra={"call_uuid": self.call_uuid})
+
+                # ── Diagnostic: confirm STT→session transcript pipeline ──────
+                @self._session.on("user_input_transcribed")
+                def on_transcript(event) -> None:
+                    if event.is_final:
+                        logger.info(
+                            "transcript received",
+                            extra={
+                                "call_uuid": self.call_uuid,
+                                "transcript": event.transcript,
+                            },
+                        )
 
                 # ── Latency tracking ─────────────────────────────────────────
                 # Track when the LLM starts thinking and when Kavya first speaks.
