@@ -111,6 +111,7 @@ def setup_logging(log_dir: str = "logs", log_level: str = "INFO") -> None:
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("livekit").setLevel(logging.INFO)   # keep LiveKit INFO
     logging.getLogger("sarvam").setLevel(logging.INFO)
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)  # watches its own log file — very noisy
 
 
 def get_logger(name: str) -> logging.Logger:

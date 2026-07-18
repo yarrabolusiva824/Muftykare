@@ -136,7 +136,7 @@ SARVAM_LANGUAGE         = AGENT_LANGUAGE   # "te-IN" (default) or "en-IN"
 SARVAM_ENDPOINTING_MS   = 0.07             # 70ms — Sarvam's processing latency
 
 # ── LLM config ─────────────────────────────────────────────────────────────
-LLM_MODEL               = "gpt-4.1-mini"
+LLM_MODEL               = "gpt-4o"
 LLM_MAX_TOOL_STEPS      = 5               # max tool call chain per turn
 
 # ── Agent names (registered in LiveKit) ────────────────────────────────────

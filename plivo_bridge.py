@@ -16,6 +16,7 @@ import asyncio
 import audioop
 import base64
 import json
+import time
 import traceback
 
 from fastapi import WebSocket
@@ -94,9 +95,11 @@ class PlivoAudioOutput(agent_io.AudioOutput):
         self._pushed_duration = 0.0
         self._interrupted = asyncio.Event()
         self._flush_task: asyncio.Task | None = None
+        self._flush_time: float = 0.0  # monotonic timestamp when flush() was called
 
     async def capture_frame(self, frame: rtc.AudioFrame) -> None:
         """Called by the TTS pipeline for each audio frame."""
+        logger.debug(f"capture_frame called — {frame.samples_per_channel} samples")
         await super().capture_frame(frame)
 
         pcm_bytes = bytes(frame.data)
@@ -115,7 +118,9 @@ class PlivoAudioOutput(agent_io.AudioOutput):
             pass
 
     def flush(self) -> None:
+        import time
         super().flush()
+        self._flush_time = time.monotonic()
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
         self._flush_task = asyncio.create_task(self._wait_for_playout())
@@ -148,8 +153,26 @@ class PlivoAudioOutput(agent_io.AudioOutput):
         self.on_playback_finished(playback_position=pushed_duration, interrupted=interrupted)
 
     async def _wait_queue_drained(self) -> None:
+        """
+        Wait until Plivo has had enough time to play back all the audio we
+        queued. We can't get a playback-complete ack from Plivo, so we estimate
+        duration from bytes pushed (bytes / 8000 = seconds at 8kHz mulaw).
+
+        The key insight: _send_audio_to_plivo drains the queue much faster than
+        real-time. Waiting for queue-empty fires this signal almost immediately,
+        which makes the session think the turn ended before Plivo has played
+        even the first syllable. Instead, sleep for the remaining estimated
+        playback duration minus time already elapsed since flush().
+        """
+        import time
+        # Wait until the queue is actually drained first (frames handed to sender)
         while not self._mulaw_queue.empty():
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(0.01)
+        # Then wait for the remaining estimated playback wall-clock time
+        elapsed = time.monotonic() - self._flush_time
+        remaining = max(0.0, self._pushed_duration - elapsed)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
 
 # ── PlivoBridge — main bridge class ────────────────────────────────────────
@@ -169,6 +192,9 @@ class PlivoBridge:
         self._session: AgentSession | None = None
         self._audio_input: PlivoAudioInput | None = None
         self._audio_out_queue: "asyncio.Queue[bytes]" = asyncio.Queue(maxsize=200)
+        self._intent: str | None = None
+        self._outcome: str | None = None
+        self._order_id: str | None = None
         self._closed = False
         self._agent_ready = False
         self._stream_sid: str | None = None
@@ -281,16 +307,70 @@ class PlivoBridge:
                 self._session.output.audio = audio_output
 
                 await self._session.start(agent=GreeterAgent())
-                self._session.output.set_audio_enabled(True)
                 self._agent_ready = True
+                t_session_ready = time.perf_counter()
                 logger.info("agent started", extra={"call_uuid": self.call_uuid})
+
+                # ── Latency tracking ─────────────────────────────────────────
+                # Track when the LLM starts thinking and when Kavya first speaks.
+                # Fires "call latency breakdown" on the first agent_speech_started.
+                t_call_start = time.perf_counter()  # approx; real start is above
+                t_llm_start: float | None = None
+                t_first_audio: float | None = None
+
+                @self._session.on("agent_state_changed")
+                def _on_state_changed(event) -> None:
+                    nonlocal t_llm_start
+                    if getattr(event, "new_state", None) == "thinking" and t_llm_start is None:
+                        t_llm_start = time.perf_counter()
+
+                @self._session.on("agent_speech_started")
+                def _on_speech_started(event) -> None:
+                    nonlocal t_first_audio
+                    if t_first_audio is not None:
+                        return
+                    t_first_audio = time.perf_counter()
+                    logger.info(
+                        "call latency breakdown",
+                        extra={
+                            "call_uuid": self.call_uuid,
+                            "session_ready_to_first_audio_ms": round(
+                                (t_first_audio - t_session_ready) * 1000
+                            ),
+                            "llm_start_to_first_audio_ms": (
+                                round((t_first_audio - t_llm_start) * 1000)
+                                if t_llm_start else "N/A"
+                            ),
+                        },
+                    )
 
                 # Keep the http_context alive for the entire call duration.
                 # TTS/STT WebSocket sessions require an active aiohttp session
                 # (via http_session()) throughout — not just during startup.
                 # self._closed is set to True by close() when the call ends.
-                while not self._closed:
-                    await asyncio.sleep(1)
+                try:
+                    while not self._closed:
+                        await asyncio.sleep(1)
+                finally:
+                    # Close the session BEFORE http_open exits.
+                    # If we let http_open tear down first, the aiohttp session
+                    # (which Sarvam TTS/STT WebSockets depend on) is gone and the
+                    # in-flight TTS stream raises ChanClosed mid-frame.
+                    if self._session:
+                        try:
+                            userdata: MuftyKareUserData = self._session.userdata
+                            self._intent = userdata.intent
+                            self._outcome = userdata.outcome
+                            self._order_id = userdata.current_order_id
+                        except Exception:
+                            pass
+                        try:
+                            await self._session.aclose()
+                        except Exception as e:
+                            logger.debug(
+                                "session aclose error",
+                                extra={"error": str(e), "call_uuid": self.call_uuid},
+                            )
 
             except Exception:
                 logger.error(
@@ -325,7 +405,7 @@ class PlivoBridge:
                 await self.websocket.send_json({
                     "event": "playAudio",
                     "media": {
-                        "contentType": "audio/x-mulaw;rate=8000",
+                        "contentType": "audio/x-mulaw",
                         "sampleRate": 8000,
                         "payload": payload,
                     }
@@ -363,16 +443,11 @@ class PlivoBridge:
             except Exception:
                 pass
 
-        intent = outcome = order_id = None
-        try:
-            if self._session:
-                userdata: MuftyKareUserData = self._session.userdata
-                intent = userdata.intent
-                outcome = userdata.outcome
-                order_id = userdata.current_order_id
-                await self._session.aclose()
-        except Exception as e:
-            logger.warning("session close error", extra={"error": str(e)})
+        intent = self._intent
+        outcome = self._outcome
+        order_id = self._order_id
+        # session.aclose() was already called inside _start_agent's finally block
+        # (while the http_context was still alive) — do not call it again here.
 
         if self._send_task:
             self._send_task.cancel()
