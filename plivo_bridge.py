@@ -117,6 +117,10 @@ class PlivoAudioOutput(agent_io.AudioOutput):
         self._flush_time: float = 0.0  # monotonic timestamp when flush() was called
         self._ambient_pcm = ambient_pcm if ambient_pcm is not None and len(ambient_pcm) else None
         self._ambient_pos = 0
+        # Called on barge-in to tell Plivo to discard audio it has already
+        # buffered on its side — draining _mulaw_queue alone only stops
+        # frames not yet sent, it doesn't touch what Plivo is still playing.
+        self._on_interrupt = None
 
     def _mix_ambient(self, pcm_bytes: bytes) -> bytes:
         """Overlay the next slice of the looping ambient buffer onto pcm_bytes."""
@@ -170,6 +174,8 @@ class PlivoAudioOutput(agent_io.AudioOutput):
                 self._mulaw_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+        if self._on_interrupt:
+            asyncio.create_task(self._on_interrupt())
         if self._pushed_duration:
             self._interrupted.set()
 
@@ -429,6 +435,17 @@ class PlivoBridge:
                     BuiltinAudioClip.OFFICE_AMBIENCE.path(), AGENT_SAMPLE_RATE
                 )
                 audio_output = PlivoAudioOutput(self._audio_out_queue, ambient_pcm=ambient_pcm)
+
+                async def _interrupt_plivo_audio() -> None:
+                    # Tell Plivo to discard whatever it has already buffered
+                    # for playback — clearing our local queue isn't enough,
+                    # the caller would keep hearing the rest of the sentence.
+                    try:
+                        await self.websocket.send_json({"event": "clearAudio"})
+                    except Exception:
+                        pass
+
+                audio_output._on_interrupt = _interrupt_plivo_audio
 
                 self._session = AgentSession[MuftyKareUserData](
                     userdata=userdata,
