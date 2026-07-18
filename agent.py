@@ -457,7 +457,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # ── Latency tracking event hooks ─────────────────────────────────────────
     @session.on("agent_state_changed")
     def on_state_changed(event):
-        if event.agent_state == "thinking" and timings.llm_start is None:
+        if event.new_state == "thinking" and timings.llm_start is None:
             timings.llm_start = time.perf_counter()
 
     @session.on("agent_speech_started")
