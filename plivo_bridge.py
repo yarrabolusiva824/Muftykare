@@ -208,83 +208,92 @@ class PlivoBridge:
 
     async def _start_agent(self) -> None:
         """Initialize DB, customer lookup, agent session."""
-        try:
-            self._db_pool = await create_pool()
-            customer = await fetch_customer_by_phone(self._db_pool, self.caller_phone)
-
-            userdata = MuftyKareUserData(
-                db_pool=self._db_pool,
-                call_id=self.call_uuid,
-                call_direction=DIRECTION_INBOUND,
-                caller_phone=self.caller_phone,
-                customer_id=customer["id"] if customer else None,
-                customer_name=customer["name"] if customer else None,
-                customer_address=customer.get("address") if customer else None,
-                language=SARVAM_LANGUAGE,
-            )
-            userdata.agents = build_agent_registry()
-
+        from livekit.agents.utils.http_context import open as http_open
+        async with http_open():
             try:
-                userdata.call_log_id = await log_call_start(
-                    self._db_pool,
+                self._db_pool = await create_pool()
+                customer = await fetch_customer_by_phone(self._db_pool, self.caller_phone)
+
+                userdata = MuftyKareUserData(
+                    db_pool=self._db_pool,
                     call_id=self.call_uuid,
+                    call_direction=DIRECTION_INBOUND,
                     caller_phone=self.caller_phone,
-                    customer_id=userdata.customer_id,
-                    direction=DIRECTION_INBOUND,
+                    customer_id=customer["id"] if customer else None,
+                    customer_name=customer["name"] if customer else None,
+                    customer_address=customer.get("address") if customer else None,
                     language=SARVAM_LANGUAGE,
                 )
-            except Exception as e:
-                logger.warning("log_call_start failed", extra={"error": str(e)})
+                userdata.agents = build_agent_registry()
 
-            logger.warning(
-                "no LiveKit room on this call path — human warm-transfer (to_human) "
-                "will not be able to connect a manager",
-                extra={"call_uuid": self.call_uuid},
-            )
+                try:
+                    userdata.call_log_id = await log_call_start(
+                        self._db_pool,
+                        call_id=self.call_uuid,
+                        caller_phone=self.caller_phone,
+                        customer_id=userdata.customer_id,
+                        direction=DIRECTION_INBOUND,
+                        language=SARVAM_LANGUAGE,
+                    )
+                except Exception as e:
+                    logger.warning("log_call_start failed", extra={"error": str(e)})
 
-            # Build custom I/O
-            self._audio_input = PlivoAudioInput()
-            audio_output = PlivoAudioOutput(self._audio_out_queue)
+                logger.warning(
+                    "no LiveKit room on this call path — human warm-transfer (to_human) "
+                    "will not be able to connect a manager",
+                    extra={"call_uuid": self.call_uuid},
+                )
 
-            # Build session — no room/audio kwargs on AgentSession's constructor
-            # in this livekit-agents version. Custom I/O is wired below via
-            # session.input.audio / session.output.audio before start().
-            self._session = AgentSession[MuftyKareUserData](
-                userdata=userdata,
-                stt=sarvam.STT(
-                    model=SARVAM_STT_MODEL,
-                    language=SARVAM_LANGUAGE,
-                    mode="transcribe",
-                    flush_signal=True,
-                ),
-                llm=lk_openai.LLM(
-                    model=LLM_MODEL,
-                    parallel_tool_calls=False,
-                ),
-                tts=sarvam.TTS(
-                    target_language_code=SARVAM_LANGUAGE,
-                    model=SARVAM_TTS_MODEL,
-                    speaker=SARVAM_TTS_SPEAKER,
-                ),
-                turn_detection="stt",
-                min_endpointing_delay=SARVAM_ENDPOINTING_MS,
-                user_away_timeout=USER_AWAY_TIMEOUT_SECS,
-            )
+                # Build custom I/O
+                self._audio_input = PlivoAudioInput()
+                audio_output = PlivoAudioOutput(self._audio_out_queue)
 
-            # Must be set before start() — start() only skips RoomIO's audio
-            # setup when input.audio/output.audio are already non-None, and
-            # we never pass room=, so RoomIO is never created at all.
-            self._session.input.audio = self._audio_input
-            self._session.output.audio = audio_output
+                # Build session — no room/audio kwargs on AgentSession's constructor
+                # in this livekit-agents version. Custom I/O is wired below via
+                # session.input.audio / session.output.audio before start().
+                self._session = AgentSession[MuftyKareUserData](
+                    userdata=userdata,
+                    stt=sarvam.STT(
+                        model=SARVAM_STT_MODEL,
+                        language=SARVAM_LANGUAGE,
+                        mode="transcribe",
+                        flush_signal=True,
+                    ),
+                    llm=lk_openai.LLM(
+                        model=LLM_MODEL,
+                        parallel_tool_calls=False,
+                    ),
+                    tts=sarvam.TTS(
+                        target_language_code=SARVAM_LANGUAGE,
+                        model=SARVAM_TTS_MODEL,
+                        speaker=SARVAM_TTS_SPEAKER,
+                    ),
+                    turn_detection="stt",
+                    min_endpointing_delay=SARVAM_ENDPOINTING_MS,
+                    user_away_timeout=USER_AWAY_TIMEOUT_SECS,
+                )
 
-            await self._session.start(agent=GreeterAgent())
-            logger.info("agent started", extra={"call_uuid": self.call_uuid})
+                # Must be set before start() — start() only skips RoomIO's audio
+                # setup when input.audio/output.audio are already non-None, and
+                # we never pass room=, so RoomIO is never created at all.
+                self._session.input.audio = self._audio_input
+                self._session.output.audio = audio_output
 
-        except Exception:
-            logger.error(
-                "agent start failed\n" + traceback.format_exc(),
-                extra={"call_uuid": self.call_uuid},
-            )
+                await self._session.start(agent=GreeterAgent())
+                logger.info("agent started", extra={"call_uuid": self.call_uuid})
+
+                # Keep the http_context alive for the entire call duration.
+                # TTS/STT WebSocket sessions require an active aiohttp session
+                # (via http_session()) throughout — not just during startup.
+                # self._closed is set to True by close() when the call ends.
+                while not self._closed:
+                    await asyncio.sleep(1)
+
+            except Exception:
+                logger.error(
+                    "agent start failed\n" + traceback.format_exc(),
+                    extra={"call_uuid": self.call_uuid},
+                )
 
     async def _send_audio_to_plivo(self) -> None:
         """Drain outbound mulaw queue and send back to Plivo."""
