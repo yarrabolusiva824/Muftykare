@@ -282,6 +282,7 @@ class PlivoBridge:
                 self._session.output.audio = audio_output
 
                 await self._session.start(agent=GreeterAgent())
+                self._session.output.set_audio_enabled(True)
                 self._agent_ready = True
                 logger.info("agent started", extra={"call_uuid": self.call_uuid})
 
