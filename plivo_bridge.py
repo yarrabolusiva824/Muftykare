@@ -170,6 +170,7 @@ class PlivoBridge:
         self._audio_input: PlivoAudioInput | None = None
         self._audio_out_queue: "asyncio.Queue[bytes]" = asyncio.Queue(maxsize=200)
         self._closed = False
+        self._agent_ready = False
         self._stream_sid: str | None = None
         self._send_task: asyncio.Task | None = None
         self._agent_start_task: asyncio.Task | None = None
@@ -188,6 +189,7 @@ class PlivoBridge:
                 })
                 self._agent_start_task = asyncio.create_task(self._start_agent())
                 self._send_task = asyncio.create_task(self._send_audio_to_plivo())
+                asyncio.create_task(self._send_hold_silence())
 
             elif ev_type == "media":
                 payload = event.get("media", {}).get("payload", "")
@@ -280,6 +282,7 @@ class PlivoBridge:
                 self._session.output.audio = audio_output
 
                 await self._session.start(agent=GreeterAgent())
+                self._agent_ready = True
                 logger.info("agent started", extra={"call_uuid": self.call_uuid})
 
                 # Keep the http_context alive for the entire call duration.
@@ -294,6 +297,20 @@ class PlivoBridge:
                     "agent start failed\n" + traceback.format_exc(),
                     extra={"call_uuid": self.call_uuid},
                 )
+
+    async def _send_hold_silence(self) -> None:
+        """
+        Send mulaw silence to Plivo every 20ms while agent is initializing.
+        Keeps Plivo from dropping the connection during the 5-6s agent startup.
+        mulaw silence byte is 0xFF (127 in linear = silence in G.711 u-law).
+        """
+        silence_chunk = b'\xff' * 160  # 160 bytes = 20ms at 8kHz
+        while not self._closed and not self._agent_ready:
+            try:
+                self._audio_out_queue.put_nowait(silence_chunk)
+            except asyncio.QueueFull:
+                pass
+            await asyncio.sleep(0.02)
 
     async def _send_audio_to_plivo(self) -> None:
         """Drain outbound mulaw queue and send back to Plivo."""
