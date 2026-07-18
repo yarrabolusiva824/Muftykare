@@ -16,6 +16,7 @@ import asyncio
 import audioop
 import base64
 import json
+import traceback
 
 from fastapi import WebSocket
 from livekit import rtc
@@ -245,7 +246,9 @@ class PlivoBridge:
             self._audio_input = PlivoAudioInput()
             audio_output = PlivoAudioOutput(self._audio_out_queue)
 
-            # Build session with custom I/O — no LiveKit room needed
+            # Build session — no room/audio kwargs on AgentSession's constructor
+            # in this livekit-agents version. Custom I/O is wired below via
+            # session.input.audio / session.output.audio before start().
             self._session = AgentSession[MuftyKareUserData](
                 userdata=userdata,
                 stt=sarvam.STT(
@@ -263,18 +266,25 @@ class PlivoBridge:
                     model=SARVAM_TTS_MODEL,
                     speaker=SARVAM_TTS_SPEAKER,
                 ),
-                audio_input=self._audio_input,
-                audio_output=audio_output,
                 turn_detection="stt",
                 min_endpointing_delay=SARVAM_ENDPOINTING_MS,
                 user_away_timeout=USER_AWAY_TIMEOUT_SECS,
             )
 
+            # Must be set before start() — start() only skips RoomIO's audio
+            # setup when input.audio/output.audio are already non-None, and
+            # we never pass room=, so RoomIO is never created at all.
+            self._session.input.audio = self._audio_input
+            self._session.output.audio = audio_output
+
             await self._session.start(agent=GreeterAgent())
             logger.info("agent started", extra={"call_uuid": self.call_uuid})
 
-        except Exception as e:
-            logger.error("agent start failed", extra={"error": str(e), "call_uuid": self.call_uuid})
+        except Exception:
+            logger.error(
+                "agent start failed\n" + traceback.format_exc(),
+                extra={"call_uuid": self.call_uuid},
+            )
 
     async def _send_audio_to_plivo(self) -> None:
         """Drain outbound mulaw queue and send back to Plivo."""
