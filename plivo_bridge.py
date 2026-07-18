@@ -2,15 +2,27 @@
 plivo_bridge.py — Bridges Plivo bidirectional audio stream to MuftyKare agent.
 
 Audio path:
-  Plivo -> base64 mulaw 8kHz -> PCM 16kHz -> Sarvam STT -> GPT-4.1-mini
-  Sarvam TTS -> PCM -> mulaw 8kHz -> base64 -> Plivo -> Caller
+  Plivo -> base64 mulaw 8kHz -> PCM 16kHz -> rtc.AudioSource -> LiveKit room
+    -> RoomIO (BVCTelephony) -> Sarvam STT -> GPT-4.1-mini
+  Sarvam TTS -> PlivoAudioOutput -> PCM -> mulaw 8kHz -> base64 -> Plivo -> Caller
 
-No LiveKit SIP bridge, no LiveKit room -- eliminates Issue #608 audio artifacts.
+Two LiveKit room connections are used (see PlivoBridge._start_agent):
+  - self._caller_room, identity "plivo-caller-*", publishes the caller's
+    audio as a track. RoomIO only ever treats a *remote* participant's
+    track as input, so this must be a separate identity from the agent's.
+  - self._agent_room, identity "agent-*", is passed as room= to
+    AgentSession.start() and is what RoomIO/BVCTelephony/BackgroundAudioPlayer
+    /Egress all operate on. TTS output still goes through PlivoAudioOutput
+    (not RoomIO's own audio output track) straight to Plivo.
 
-NOTE: because there is no LiveKit room on this path, GreeterAgent.to_human /
-_warm_transfer() (agents/base.py) cannot merge a human manager into the call --
-WarmTransferTask requires a room. It degrades gracefully (apology + hangup)
-via its own except-Exception handling; nothing here needs to catch that.
+NOTE: GreeterAgent.to_human / _warm_transfer() (agents/base.py) still cannot
+merge a human manager into the call on this path. WarmTransferTask calls
+get_job_context(), which is only populated inside the real LiveKit worker
+dispatch loop (cli.run_app / AgentServer). This bridge is a standalone
+FastAPI WebSocket handler that never enters that dispatch flow, so
+get_job_context() raises regardless of whether a room exists. It degrades
+gracefully (apology + hangup) via its own except-Exception handling; nothing
+here needs to catch that.
 """
 import asyncio
 import audioop
@@ -21,16 +33,21 @@ import traceback
 
 from fastapi import WebSocket
 from livekit import rtc
-from livekit.agents import AgentSession
-from livekit.agents.voice import io as agent_io
+from livekit.agents import AgentSession, BackgroundAudioPlayer, AudioConfig, BuiltinAudioClip
+from livekit.agents.voice import io as agent_io, room_io
+from livekit.api import AccessToken, VideoGrants
 from livekit.plugins import sarvam
 from livekit.plugins import openai as lk_openai
+from livekit.plugins import noise_cancellation
 
 from logger import get_logger
 from db.connection import create_pool, close_pool
 from db.queries import fetch_customer_by_phone, log_call_start, log_call_end
 from userdata import MuftyKareUserData
 from agents import build_agent_registry, GreeterAgent
+from audio_cache import make_ambient_generator
+from agent import start_call_recording, stop_call_recording
+from config.settings import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 from config.constants import (
     SARVAM_STT_MODEL, SARVAM_TTS_MODEL, SARVAM_TTS_SPEAKER,
     SARVAM_LANGUAGE, SARVAM_ENDPOINTING_MS, LLM_MODEL,
@@ -42,34 +59,6 @@ logger = get_logger(__name__)
 # Audio constants
 PLIVO_SAMPLE_RATE = 8000    # Plivo sends/receives mulaw at 8kHz
 AGENT_SAMPLE_RATE = 16000   # Sarvam STT expects 16kHz PCM
-
-
-# ── Custom AudioInput — queue-backed, fed by Plivo media events ────────────
-
-class PlivoAudioInput(agent_io.AudioInput):
-    """Pull-based AudioInput. Plivo media events push frames in via push_frame();
-    the STT pipeline pulls them out via __anext__()."""
-
-    def __init__(self) -> None:
-        super().__init__(label="plivo_input")
-        self._queue: "asyncio.Queue[rtc.AudioFrame | None]" = asyncio.Queue(maxsize=200)
-
-    def push_frame(self, frame: rtc.AudioFrame) -> None:
-        """Non-blocking — called from the Plivo media event handler."""
-        logger.debug(f"push_frame — queue size: {self._queue.qsize()}")
-        try:
-            self._queue.put_nowait(frame)
-        except asyncio.QueueFull:
-            pass  # drop rather than block if the STT pipeline falls behind
-
-    async def __anext__(self) -> rtc.AudioFrame:
-        frame = await self._queue.get()
-        if frame is None:
-            raise StopAsyncIteration
-        return frame
-
-    async def aclose(self) -> None:
-        await self._queue.put(None)
 
 
 # ── Custom AudioOutput — captures TTS frames, enqueues mulaw for Plivo ─────
@@ -190,7 +179,12 @@ class PlivoBridge:
 
         self._db_pool = None
         self._session: AgentSession | None = None
-        self._audio_input: PlivoAudioInput | None = None
+        self._room_name = f"muftykare-plivo-{call_uuid}"
+        self._caller_room: rtc.Room | None = None
+        self._agent_room: rtc.Room | None = None
+        self._audio_source: rtc.AudioSource | None = None
+        self._background_audio: BackgroundAudioPlayer | None = None
+        self._egress_id: str | None = None
         self._audio_out_queue: "asyncio.Queue[bytes]" = asyncio.Queue(maxsize=200)
         self._intent: str | None = None
         self._outcome: str | None = None
@@ -200,6 +194,20 @@ class PlivoBridge:
         self._stream_sid: str | None = None
         self._send_task: asyncio.Task | None = None
         self._agent_start_task: asyncio.Task | None = None
+
+    def _generate_token(self, identity: str, name: str) -> str:
+        return (
+            AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+            .with_identity(identity)
+            .with_name(name)
+            .with_grants(VideoGrants(
+                room_join=True,
+                room=self._room_name,
+                can_publish=True,
+                can_subscribe=True,
+            ))
+            .to_jwt()
+        )
 
     async def run(self) -> None:
         """Main WebSocket event loop."""
@@ -218,7 +226,7 @@ class PlivoBridge:
 
             elif ev_type == "media":
                 payload = event.get("media", {}).get("payload", "")
-                if payload and self._audio_input:
+                if payload and self._audio_source:
                     mulaw_bytes = base64.b64decode(payload)
                     pcm_bytes = self._mulaw_to_pcm16(mulaw_bytes)
                     frame = rtc.AudioFrame(
@@ -227,7 +235,7 @@ class PlivoBridge:
                         num_channels=1,
                         samples_per_channel=len(pcm_bytes) // 2,
                     )
-                    self._audio_input.push_frame(frame)
+                    await self._audio_source.capture_frame(frame)
 
             elif ev_type == "stop":
                 logger.info("stream stopped", extra={"call_uuid": self.call_uuid})
@@ -266,18 +274,41 @@ class PlivoBridge:
                     logger.warning("log_call_start failed", extra={"error": str(e)})
 
                 logger.warning(
-                    "no LiveKit room on this call path — human warm-transfer (to_human) "
-                    "will not be able to connect a manager",
+                    "plivo call path has a real LiveKit room but no JobContext — "
+                    "human warm-transfer (to_human) still cannot connect a manager "
+                    "because WarmTransferTask requires get_job_context()",
                     extra={"call_uuid": self.call_uuid},
                 )
 
-                # Build custom I/O
-                self._audio_input = PlivoAudioInput()
+                # ── Connect the caller's room identity and publish its audio ──
+                # RoomIO only treats a REMOTE participant's track as input, so
+                # the caller must be a separate identity from the agent's.
+                self._caller_room = rtc.Room()
+                caller_token = self._generate_token(
+                    f"plivo-caller-{self.call_uuid[:8]}", "Plivo Caller"
+                )
+                await self._caller_room.connect(LIVEKIT_URL, caller_token)
+
+                self._audio_source = rtc.AudioSource(
+                    sample_rate=AGENT_SAMPLE_RATE, num_channels=1
+                )
+                caller_track = rtc.LocalAudioTrack.create_audio_track(
+                    "plivo-caller", self._audio_source
+                )
+                await self._caller_room.local_participant.publish_track(caller_track)
+
+                # ── Connect the agent's own room identity ─────────────────────
+                self._agent_room = rtc.Room()
+                agent_token = self._generate_token(
+                    f"agent-{self.call_uuid[:8]}", "MuftyKare Agent"
+                )
+                await self._agent_room.connect(LIVEKIT_URL, agent_token)
+
+                # Build custom TTS output — RoomIO's own audio output is
+                # disabled automatically once session.output.audio is set
+                # before start() (see AgentSession.start()).
                 audio_output = PlivoAudioOutput(self._audio_out_queue)
 
-                # Build session — no room/audio kwargs on AgentSession's constructor
-                # in this livekit-agents version. Custom I/O is wired below via
-                # session.input.audio / session.output.audio before start().
                 self._session = AgentSession[MuftyKareUserData](
                     userdata=userdata,
                     stt=sarvam.STT(
@@ -300,13 +331,40 @@ class PlivoBridge:
                     user_away_timeout=USER_AWAY_TIMEOUT_SECS,
                 )
 
-                # Must be set before start() — start() only skips RoomIO's audio
-                # setup when input.audio/output.audio are already non-None, and
-                # we never pass room=, so RoomIO is never created at all.
-                self._session.input.audio = self._audio_input
+                # Must be set before start() — RoomIO checks output.audio and
+                # skips creating its own audio output track when it's already set.
                 self._session.output.audio = audio_output
 
-                await self._session.start(agent=GreeterAgent())
+                await self._session.start(
+                    agent=GreeterAgent(),
+                    room=self._agent_room,
+                    room_input_options=room_io.RoomInputOptions(
+                        noise_cancellation=noise_cancellation.BVCTelephony(),
+                    ),
+                )
+                self._session.output.set_audio_enabled(True)
+
+                # Background ambient audio — needs a real room.
+                ambient_gen = await make_ambient_generator(BuiltinAudioClip.OFFICE_AMBIENCE.path())
+                self._background_audio = BackgroundAudioPlayer(
+                    ambient_sound=AudioConfig(ambient_gen, volume=2.5),
+                )
+                await self._background_audio.start(
+                    room=self._agent_room, agent_session=self._session
+                )
+
+                # Egress recording — fire-and-forget, don't block session start.
+                async def _start_recording_bg() -> None:
+                    egress_id = await start_call_recording(self._room_name, self.call_uuid)
+                    if egress_id:
+                        self._egress_id = egress_id
+                        logger.info(
+                            "call recording started",
+                            extra={"call_uuid": self.call_uuid, "egress_id": egress_id},
+                        )
+
+                asyncio.create_task(_start_recording_bg())
+
                 self._agent_ready = True
                 t_session_ready = time.perf_counter()
                 logger.info("agent started", extra={"call_uuid": self.call_uuid})
@@ -446,9 +504,6 @@ class PlivoBridge:
             return
         self._closed = True
 
-        if self._audio_input:
-            await self._audio_input.aclose()
-
         if self._agent_start_task:
             try:
                 await self._agent_start_task
@@ -460,6 +515,30 @@ class PlivoBridge:
         order_id = self._order_id
         # session.aclose() was already called inside _start_agent's finally block
         # (while the http_context was still alive) — do not call it again here.
+
+        if self._background_audio:
+            try:
+                await self._background_audio.aclose()
+            except Exception as e:
+                logger.debug("background audio aclose error", extra={"error": str(e)})
+
+        if self._egress_id:
+            try:
+                await stop_call_recording(self._egress_id)
+            except Exception as e:
+                logger.debug("stop_call_recording error", extra={"error": str(e)})
+
+        if self._caller_room:
+            try:
+                await self._caller_room.disconnect()
+            except Exception as e:
+                logger.debug("caller room disconnect error", extra={"error": str(e)})
+
+        if self._agent_room:
+            try:
+                await self._agent_room.disconnect()
+            except Exception as e:
+                logger.debug("agent room disconnect error", extra={"error": str(e)})
 
         if self._send_task:
             self._send_task.cancel()
