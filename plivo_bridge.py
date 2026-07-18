@@ -100,7 +100,6 @@ class PlivoAudioOutput(agent_io.AudioOutput):
 
     async def capture_frame(self, frame: rtc.AudioFrame) -> None:
         """Called by the TTS pipeline for each audio frame."""
-        logger.debug(f"capture_frame called — {frame.samples_per_channel} samples")
         await super().capture_frame(frame)
 
         pcm_bytes = bytes(frame.data)
