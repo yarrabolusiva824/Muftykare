@@ -470,6 +470,8 @@ class PlivoBridge:
                     turn_detection="stt",
                     min_endpointing_delay=SARVAM_ENDPOINTING_MS,
                     user_away_timeout=USER_AWAY_TIMEOUT_SECS,
+                    false_interruption_timeout=0.3,
+                    min_interruption_duration=0.2,
                 )
 
                 # Must be set before start() — RoomIO checks output.audio and
