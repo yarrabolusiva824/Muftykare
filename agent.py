@@ -549,4 +549,4 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
-    cli.run_app(server)
+    cli.run_app(server, region="ap-south")
