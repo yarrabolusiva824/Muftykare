@@ -137,7 +137,7 @@ SARVAM_ENDPOINTING_MS   = 0.07             # 70ms — Sarvam's processing latenc
 
 # ── LLM config ─────────────────────────────────────────────────────────────
 # LLM_MODEL               = "gpt-4o"
-LLM_MODEL = "gemini-2.5-flash"  # fastest, best for voice agents
+LLM_MODEL = "gemini-3.1-flash-lite"  # fastest, best for voice agents
 LLM_MAX_TOOL_STEPS      = 5               # max tool call chain per turn
 
 # ── Agent names (registered in LiveKit) ────────────────────────────────────
