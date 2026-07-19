@@ -74,7 +74,7 @@ from config.constants import (
     CALL_TYPE_PROSPECTING,
     AGENT_OUTBOUND,
 )
-
+from livekit.plugins import google as lk_google
 # ── Agent map for TEST_AGENT selection ──────────────────────────────────────
 _AGENT_MAP = {
     "greeter":   GreeterAgent,
@@ -434,11 +434,13 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
 
         # LLM — GPT-4o, parallel_tool_calls=False for voice reliability
-        llm=lk_openai.LLM(
+        # llm=lk_openai.LLM(
+        #     model=LLM_MODEL,
+        #     parallel_tool_calls=False,
+        # ),
+        llm=lk_google.LLM(
             model=LLM_MODEL,
-            parallel_tool_calls=False,
         ),
-
         # TTS — Sarvam Bulbul v3, Telugu female voice
         # TEMP: swapped for OpenAI TTS for testing — restore this once testing is done
         tts=sarvam.TTS(
