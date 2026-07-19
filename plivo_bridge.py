@@ -34,7 +34,7 @@ import base64
 import json
 import time
 import traceback
-
+from livekit.plugins import google as lk_google
 import numpy as np
 from fastapi import WebSocket
 from livekit import rtc
@@ -455,10 +455,13 @@ class PlivoBridge:
                         mode="transcribe",
                         flush_signal=True,
                     ),
-                    llm=lk_openai.LLM(
-                        model=LLM_MODEL,
-                        parallel_tool_calls=False,
-                    ),
+                    # llm=lk_openai.LLM(
+                    #     model=LLM_MODEL,
+                    #     parallel_tool_calls=False,
+                    # ),
+                    llm=lk_google.LLM(
+            model=LLM_MODEL,
+        ),
                     tts=sarvam.TTS(
                         target_language_code=SARVAM_LANGUAGE,
                         model=SARVAM_TTS_MODEL,
