@@ -458,7 +458,6 @@ class PlivoBridge:
                         language=SARVAM_LANGUAGE,
                         mode="transcribe",
                         flush_signal=True,
-                        vad_signals=True
                     ),
                     # llm=lk_openai.LLM(
                     #     model=LLM_MODEL,

@@ -431,7 +431,6 @@ async def entrypoint(ctx: JobContext) -> None:
             language=SARVAM_LANGUAGE,
             mode="transcribe",
             flush_signal=True,
-            vad_signals=True,
         ),
 
         # LLM — GPT-4o, parallel_tool_calls=False for voice reliability
