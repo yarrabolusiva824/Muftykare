@@ -633,6 +633,8 @@ from livekit.agents import (
     function_tool,
     inference,
 )
+from livekit.plugins import sarvam
+from livekit.plugins import google as lk_google
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -649,20 +651,27 @@ async def lookup_weather(
 server = AgentServer()
 
 
-@server.rtc_session(agent_name="muftykare-agent")
+@server.rtc_session(agent_name="muftykare-agent-dev")
 async def entrypoint(ctx: JobContext):
     session = AgentSession(
         vad=inference.VAD(),
-        # any combination of STT, LLM, TTS, or realtime API can be used
-        # this example shows LiveKit Inference, a unified API to access different models via LiveKit Cloud
-        # to use model provider keys directly, replace with the following:
-        # from livekit.plugins import deepgram, openai, cartesia
-        # stt=deepgram.STT(model="nova-3"),
-        # llm=openai.LLM(model="gpt-4.1-mini"),
-        # tts=cartesia.TTS(model="sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"),
-        stt=inference.STT("deepgram/nova-3", language="multi"),
-        llm=inference.LLM("openai/gpt-4.1-mini"),
-        tts=inference.TTS("cartesia/sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"),
+        # STT — Sarvam Saaras v3, Telugu primary
+        stt=sarvam.STT(
+            model="saaras:v3",
+            language="te-IN",
+            mode="transcribe",
+            flush_signal=True,
+        ),
+        # LLM — Gemini
+        llm=lk_google.LLM(
+            model="gemini-3.1-flash-lite",
+        ),
+        # TTS — Sarvam Bulbul v2, Telugu female voice
+        tts=sarvam.TTS(
+            target_language_code="te-IN",
+            model="bulbul:v2",
+            speaker="anushka",
+        ),
     )
 
     agent = Agent(
