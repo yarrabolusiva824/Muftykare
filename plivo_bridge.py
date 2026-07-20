@@ -109,7 +109,7 @@ class PlivoAudioOutput(agent_io.AudioOutput):
         super().__init__(
             label="plivo_output",
             sample_rate=AGENT_SAMPLE_RATE,
-            capabilities=agent_io.AudioOutputCapabilities(pause=False),
+            capabilities=agent_io.AudioOutputCapabilities(pause=True),
         )
         self._mulaw_queue = mulaw_queue
         self._pushed_duration = 0.0
@@ -122,6 +122,12 @@ class PlivoAudioOutput(agent_io.AudioOutput):
         # buffered on its side — draining _mulaw_queue alone only stops
         # frames not yet sent, it doesn't touch what Plivo is still playing.
         self._on_interrupt = None
+        # Set = sender may keep draining the queue, clear = sender stalls
+        # without dropping anything. Backs pause()/resume() so a suspected
+        # (possibly false) interruption can hold playback instead of always
+        # hard-clearing it — see resume_false_interruption in AgentSession.
+        self._pause_event = asyncio.Event()
+        self._pause_event.set()
 
     def _mix_ambient(self, pcm_bytes: bytes) -> bytes:
         """Overlay the next slice of the looping ambient buffer onto pcm_bytes."""
@@ -175,10 +181,29 @@ class PlivoAudioOutput(agent_io.AudioOutput):
                 self._mulaw_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+        # A real (non-false) interruption always ends in a hard clear — make
+        # sure the sender isn't left stalled from an earlier pause() with no
+        # matching resume().
+        self._pause_event.set()
         if self._on_interrupt:
             asyncio.create_task(self._on_interrupt())
         if self._pushed_duration:
             self._interrupted.set()
+
+    def pause(self) -> None:
+        """Stall the Plivo sender without dropping queued audio.
+
+        Called when the framework suspects — but hasn't confirmed — a
+        barge-in, so it can resume() the same sentence if the caller's sound
+        turns out not to be a real turn (a cough, "mm", background noise).
+        """
+        super().pause()
+        self._pause_event.clear()
+
+    def resume(self) -> None:
+        """Let the Plivo sender continue draining the queue after pause()."""
+        super().resume()
+        self._pause_event.set()
 
     async def _wait_for_playout(self) -> None:
         interrupted_wait = asyncio.create_task(self._interrupted.wait())
@@ -240,6 +265,7 @@ class PlivoBridge:
         self._caller_room: rtc.Room | None = None
         self._agent_room: rtc.Room | None = None
         self._audio_source: rtc.AudioSource | None = None
+        self._audio_output: "PlivoAudioOutput | None" = None
         self._egress_id: str | None = None
         self._audio_out_queue: "asyncio.Queue[bytes]" = asyncio.Queue(maxsize=200)
         self._intent: str | None = None
@@ -439,6 +465,7 @@ class PlivoBridge:
                     BuiltinAudioClip.OFFICE_AMBIENCE.path(), AGENT_SAMPLE_RATE
                 )
                 audio_output = PlivoAudioOutput(self._audio_out_queue, ambient_pcm=ambient_pcm)
+                self._audio_output = audio_output
 
                 async def _interrupt_plivo_audio() -> None:
                     # Tell Plivo to discard whatever it has already buffered
@@ -597,6 +624,11 @@ class PlivoBridge:
         """
         silence_chunk = b'\xff' * 160  # 20ms of G.711 u-law silence at 8kHz
         while not self._closed:
+            if self._audio_output is not None:
+                # Blocks here while paused (suspected-but-unconfirmed
+                # barge-in) — queued audio stays put until resume() or a
+                # hard clear_buffer() sets this back.
+                await self._audio_output._pause_event.wait()
             try:
                 mulaw_bytes = await asyncio.wait_for(
                     self._audio_out_queue.get(), timeout=0.02  # 20ms
