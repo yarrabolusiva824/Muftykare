@@ -51,7 +51,8 @@ from db.queries import fetch_customer_by_phone, log_call_start, log_call_end
 from userdata import MuftyKareUserData
 from agents import build_agent_registry, GreeterAgent
 from audio_cache import _get_cached_frames
-from agent import start_call_recording, stop_call_recording
+# Egress recording disabled — see _start_agent
+# from agent import start_call_recording, stop_call_recording
 from config.settings import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 from config.constants import (
     SARVAM_STT_MODEL, SARVAM_TTS_MODEL, SARVAM_TTS_SPEAKER,
@@ -335,14 +336,24 @@ class PlivoBridge:
                     extra={"call_uuid": self.call_uuid},
                 )
 
-                # ── Connect the caller's room identity and publish its audio ──
+                # ── Connect both room identities concurrently ──────────────────
                 # RoomIO only treats a REMOTE participant's track as input, so
-                # the caller must be a separate identity from the agent's.
+                # the caller must be a separate identity from the agent's. The
+                # two connect() calls are independent round-trips to LiveKit
+                # Cloud, so run them together instead of back-to-back — this
+                # roughly halves call setup latency.
                 self._caller_room = rtc.Room()
+                self._agent_room = rtc.Room()
                 caller_token = self._generate_token(
                     f"plivo-caller-{self.call_uuid[:8]}", "Plivo Caller"
                 )
-                await self._caller_room.connect(LIVEKIT_URL, caller_token)
+                agent_token = self._generate_token(
+                    f"agent-{self.call_uuid[:8]}", "MuftyKare Agent"
+                )
+                await asyncio.gather(
+                    self._caller_room.connect(LIVEKIT_URL, caller_token),
+                    self._agent_room.connect(LIVEKIT_URL, agent_token),
+                )
 
                 self._audio_source = rtc.AudioSource(
                     sample_rate=AGENT_SAMPLE_RATE, num_channels=1
@@ -354,13 +365,6 @@ class PlivoBridge:
                     caller_track,
                     rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE),
                 )
-
-                # ── Connect the agent's own room identity ─────────────────────
-                self._agent_room = rtc.Room()
-                agent_token = self._generate_token(
-                    f"agent-{self.call_uuid[:8]}", "MuftyKare Agent"
-                )
-                await self._agent_room.connect(LIVEKIT_URL, agent_token)
 
                 # ── Diagnostic: confirm the caller's track reaches this room ──
                 @self._agent_room.on("track_subscribed")
@@ -454,6 +458,7 @@ class PlivoBridge:
                         language=SARVAM_LANGUAGE,
                         mode="transcribe",
                         flush_signal=True,
+                        vad_signals=True
                     ),
                     # llm=lk_openai.LLM(
                     #     model=LLM_MODEL,
@@ -472,6 +477,7 @@ class PlivoBridge:
                     user_away_timeout=USER_AWAY_TIMEOUT_SECS,
                     false_interruption_timeout=0.3,
                     min_interruption_duration=0.2,
+                    vad=None,  # no VAD — we rely on Sarvam STT flush signals for turn-taking
                 )
 
                 # Must be set before start() — RoomIO checks output.audio and
@@ -487,17 +493,18 @@ class PlivoBridge:
                 )
                 self._session.output.set_audio_enabled(True)
 
-                # Egress recording — fire-and-forget, don't block session start.
-                async def _start_recording_bg() -> None:
-                    egress_id = await start_call_recording(self._room_name, self.call_uuid)
-                    if egress_id:
-                        self._egress_id = egress_id
-                        logger.info(
-                            "call recording started",
-                            extra={"call_uuid": self.call_uuid, "egress_id": egress_id},
-                        )
-
-                asyncio.create_task(_start_recording_bg())
+                # Egress recording — disabled (egress minutes were exhausted,
+                # failing every call and leaking an aiohttp session/connector).
+                # async def _start_recording_bg() -> None:
+                #     egress_id = await start_call_recording(self._room_name, self.call_uuid)
+                #     if egress_id:
+                #         self._egress_id = egress_id
+                #         logger.info(
+                #             "call recording started",
+                #             extra={"call_uuid": self.call_uuid, "egress_id": egress_id},
+                #         )
+                #
+                # asyncio.create_task(_start_recording_bg())
 
                 self._agent_ready = True
                 t_session_ready = time.perf_counter()
@@ -650,11 +657,12 @@ class PlivoBridge:
         # session.aclose() was already called inside _start_agent's finally block
         # (while the http_context was still alive) — do not call it again here.
 
-        if self._egress_id:
-            try:
-                await stop_call_recording(self._egress_id)
-            except Exception as e:
-                logger.debug("stop_call_recording error", extra={"error": str(e)})
+        # Egress recording disabled — see _start_agent, nothing to stop.
+        # if self._egress_id:
+        #     try:
+        #         await stop_call_recording(self._egress_id)
+        #     except Exception as e:
+        #         logger.debug("stop_call_recording error", extra={"error": str(e)})
 
         if self._caller_room:
             try:

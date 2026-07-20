@@ -393,31 +393,31 @@ async def entrypoint(ctx: JobContext) -> None:
         # Non-fatal — don't crash the call if logging fails
         logger.warning("log_call_start failed", extra={"error": str(e)})
 
-    egress_id: str | None = None
-
-    # ── 6b. Start call recording (background — does not block session start) ─
-    async def _start_recording_bg() -> None:
-        nonlocal egress_id
-        _id = await start_call_recording(ctx.room.name, call_id)
-        if _id:
-            egress_id = _id
-            logger.info("call recording started", extra={"egress_id": _id})
-            # ── 6c. Log recording to DB ──────────────────────────────────────
-            try:
-                from db.queries import log_call_recording
-                await log_call_recording(
-                    db_pool,
-                    call_id=call_id,
-                    customer_id=userdata.customer_id,
-                    caller_phone=caller_phone,
-                    egress_id=_id,
-                    file_path=f"calls/{call_id}.ogg",
-                    call_log_id=userdata.call_log_id,
-                )
-            except Exception as e:
-                logger.warning("log_call_recording failed", extra={"error": str(e)})
-
-    asyncio.create_task(_start_recording_bg())
+    # Egress recording disabled — egress minutes were exhausted, failing
+    # every call and leaking an aiohttp session/connector.
+    # # ── 6b. Start call recording (background — does not block session start) ─
+    # async def _start_recording_bg() -> None:
+    #     nonlocal egress_id
+    #     _id = await start_call_recording(ctx.room.name, call_id)
+    #     if _id:
+    #         egress_id = _id
+    #         logger.info("call recording started", extra={"egress_id": _id})
+    #         # ── 6c. Log recording to DB ──────────────────────────────────────
+    #         try:
+    #             from db.queries import log_call_recording
+    #             await log_call_recording(
+    #                 db_pool,
+    #                 call_id=call_id,
+    #                 customer_id=userdata.customer_id,
+    #                 caller_phone=caller_phone,
+    #                 egress_id=_id,
+    #                 file_path=f"calls/{call_id}.ogg",
+    #                 call_log_id=userdata.call_log_id,
+    #             )
+    #         except Exception as e:
+    #             logger.warning("log_call_recording failed", extra={"error": str(e)})
+    #
+    # asyncio.create_task(_start_recording_bg())
 
     # ── 7. Build AgentSession ───────────────────────────────────────────────
     session = AgentSession[MuftyKareUserData](
@@ -431,6 +431,7 @@ async def entrypoint(ctx: JobContext) -> None:
             language=SARVAM_LANGUAGE,
             mode="transcribe",
             flush_signal=True,
+            vad_signals=True,
         ),
 
         # LLM — GPT-4o, parallel_tool_calls=False for voice reliability
@@ -449,7 +450,7 @@ async def entrypoint(ctx: JobContext) -> None:
             speaker=SARVAM_TTS_SPEAKER,
             output_audio_codec="mulaw",
         ),
-
+        vad=None,
         # TTS — OpenAI (testing only)
         # tts=lk_openai.TTS(
         #     model="tts-1",
@@ -500,8 +501,9 @@ async def entrypoint(ctx: JobContext) -> None:
         except Exception as e:
             logger.warning("log_call_end failed", extra={"error": str(e)})
         finally:
-            if egress_id:
-                await stop_call_recording(egress_id)
+            # Egress recording disabled — see start of entrypoint, nothing to stop.
+            # if egress_id:
+            #     await stop_call_recording(egress_id)
             await background_audio.aclose()
             await close_pool(db_pool)
 
