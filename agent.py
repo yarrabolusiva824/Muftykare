@@ -586,7 +586,8 @@ class SimpleGreeter(Agent):
             """
         )
 
-@server.rtc_session()
+# @server.rtc_session()
+@server.rtc_session(agent_name="muftykare-agent")
 async def entrypoint(ctx: JobContext):
     await ctx.connect()
     await ctx.wait_for_participant()
