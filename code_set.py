@@ -40,36 +40,54 @@
 # if __name__ == "__main__":
 #     asyncio.run(update_sip_trunk_codecs())
 
+# import asyncio
+# from livekit import api
+# from dotenv import load_dotenv
+# load_dotenv()
+
+# async def update_sip_trunk_codecs():
+#     # 1. Initialize the LiveKit API client using your env variables
+#     async with api.LiveKitAPI() as lkapi:
+        
+#         # 2. Re-map the exact codecs you want to enforce
+#         media_config = api.SIPMediaConfig(
+#             codecs=[
+#                 api.SIPCodec(name="PCMU"),
+#                 api.SIPCodec(name="PCMA")
+#             ],
+#             only_listed_codecs=True
+#         )
+
+#         try:
+#             # 3. Use update_inbound_trunk_fields to patch media safely 
+#             # This avoids wiping out your Plivo username and password configuration!
+#             response = await lkapi.sip.update_inbound_trunk_fields(
+#                 trunk_id="ST_YjteHeGPYKxz",  # Your Trunk ID
+#                 media=media_config           # Apply the codec constraints
+#             )
+#             print(f"Trunk fields successfully patched! ID: {response.sip_trunk_id}")
+#             print(f"Current Config Name: {response.name}")
+            
+#         except Exception as e:
+#             print(f"Failed to update fields: {e}")
+
+# if __name__ == "__main__":
+#     asyncio.run(update_sip_trunk_codecs())
+
 import asyncio
 from livekit import api
 from dotenv import load_dotenv
 load_dotenv()
 
-async def update_sip_trunk_codecs():
-    # 1. Initialize the LiveKit API client using your env variables
+async def check_trunk():
     async with api.LiveKitAPI() as lkapi:
-        
-        # 2. Re-map the exact codecs you want to enforce
-        media_config = api.SIPMediaConfig(
-            codecs=[
-                api.SIPCodec(name="PCMU"),
-                api.SIPCodec(name="PCMA")
-            ],
-            only_listed_codecs=True
+        response = await lkapi.sip.list_inbound_trunk(
+            api.ListSIPInboundTrunkRequest(trunk_ids=["ST_YjteHeGPYKxz"])
         )
+        trunk = response.items[0]
+        print("Name:", trunk.name)
+        print("Media:", trunk.media)
+        print("Codecs:", trunk.media.codecs if trunk.media else "NOT SET")
+        print("Only listed:", trunk.media.only_listed_codecs if trunk.media else "NOT SET")
 
-        try:
-            # 3. Use update_inbound_trunk_fields to patch media safely 
-            # This avoids wiping out your Plivo username and password configuration!
-            response = await lkapi.sip.update_inbound_trunk_fields(
-                trunk_id="ST_YjteHeGPYKxz",  # Your Trunk ID
-                media=media_config           # Apply the codec constraints
-            )
-            print(f"Trunk fields successfully patched! ID: {response.sip_trunk_id}")
-            print(f"Current Config Name: {response.name}")
-            
-        except Exception as e:
-            print(f"Failed to update fields: {e}")
-
-if __name__ == "__main__":
-    asyncio.run(update_sip_trunk_codecs())
+asyncio.run(check_trunk())
