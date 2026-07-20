@@ -38,6 +38,8 @@ from livekit.agents import (
     AudioConfig,
     BuiltinAudioClip,
     JobContext,
+    JobProcess,
+    inference,
     cli,
 )
 from livekit.plugins import sarvam
@@ -67,7 +69,6 @@ from config.constants import (
     SARVAM_TTS_MODEL,
     SARVAM_TTS_SPEAKER,
     SARVAM_LANGUAGE,
-    SARVAM_ENDPOINTING_MS,
     LLM_MODEL,
     USER_AWAY_TIMEOUT_SECS,
     CALL_TYPE_REMINDER,
@@ -243,8 +244,14 @@ async def prewarm_ambient() -> None:
         logger.debug("ambient pre-warm failed", extra={"error": str(e)})
 
 
+def prewarm(proc: JobProcess) -> None:
+    """Load the LiveKit-bundled (Silero) VAD model once per worker process."""
+    proc.userdata["vad"] = inference.VAD(model="silero")
+
+
 # ── AgentServer ─────────────────────────────────────────────────────────────
 server = AgentServer()
+server.setup_fnc = prewarm
 
 
 @server.rtc_session(agent_name="muftykare-agent")
@@ -425,7 +432,6 @@ async def entrypoint(ctx: JobContext) -> None:
 
         # STT — Sarvam Saaras v3, Telugu primary
         # flush_signal=True is MANDATORY for Sarvam turn detection
-        # Do NOT add vad= — Sarvam handles VAD internally
         stt=sarvam.STT(
             model=SARVAM_STT_MODEL,
             language=SARVAM_LANGUAGE,
@@ -449,17 +455,15 @@ async def entrypoint(ctx: JobContext) -> None:
             speaker=SARVAM_TTS_SPEAKER,
             output_audio_codec="mulaw",
         ),
-        vad=None,
+        vad=ctx.proc.userdata["vad"],
         # TTS — OpenAI (testing only)
         # tts=lk_openai.TTS(
         #     model="tts-1",
         #     voice="nova",
         # ),
 
-        # Turn detection — Sarvam handles VAD internally via flush_signal
-        # Use top-level AgentSession kwargs (not a dict)
-        turn_detection="stt",
-        min_endpointing_delay=SARVAM_ENDPOINTING_MS,
+        # Turn detection — LiveKit (Silero) VAD, loaded once per worker in prewarm()
+        turn_detection="vad",
 
         # Silence timeout — fires user_state_changed after N seconds of silence
         user_away_timeout=USER_AWAY_TIMEOUT_SECS,

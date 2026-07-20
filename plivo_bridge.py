@@ -38,7 +38,7 @@ from livekit.plugins import google as lk_google
 import numpy as np
 from fastapi import WebSocket
 from livekit import rtc
-from livekit.agents import AgentSession, BuiltinAudioClip
+from livekit.agents import AgentSession, BuiltinAudioClip, inference
 from livekit.agents.voice import io as agent_io, room_io
 from livekit.api import AccessToken, VideoGrants
 from livekit.plugins import sarvam
@@ -56,7 +56,7 @@ from audio_cache import _get_cached_frames
 from config.settings import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 from config.constants import (
     SARVAM_STT_MODEL, SARVAM_TTS_MODEL, SARVAM_TTS_SPEAKER,
-    SARVAM_LANGUAGE, SARVAM_ENDPOINTING_MS, LLM_MODEL,
+    SARVAM_LANGUAGE, LLM_MODEL,
     USER_AWAY_TIMEOUT_SECS, DIRECTION_INBOUND,
 )
 
@@ -65,6 +65,10 @@ logger = get_logger(__name__)
 # Audio constants
 PLIVO_SAMPLE_RATE = 8000    # Plivo sends/receives mulaw at 8kHz
 AGENT_SAMPLE_RATE = 16000   # Sarvam STT expects 16kHz PCM
+
+# LiveKit-bundled (Silero) VAD — this bridge is a standalone FastAPI process,
+# not a LiveKit worker, so there's no prewarm hook. Load once per process instead.
+_vad = inference.VAD(model="silero")
 
 
 async def _load_ambient_pcm(file_path: str, target_sample_rate: int) -> "np.ndarray | None":
@@ -498,12 +502,11 @@ class PlivoBridge:
                         model=SARVAM_TTS_MODEL,
                         speaker=SARVAM_TTS_SPEAKER,
                     ),
-                    turn_detection="stt",
-                    min_endpointing_delay=SARVAM_ENDPOINTING_MS,
+                    turn_detection="vad",
                     user_away_timeout=USER_AWAY_TIMEOUT_SECS,
                     false_interruption_timeout=0.3,
                     min_interruption_duration=0.2,
-                    vad=None,  # no VAD — we rely on Sarvam STT flush signals for turn-taking
+                    vad=_vad,  # LiveKit (Silero) VAD for turn-taking
                 )
 
                 # Must be set before start() — RoomIO checks output.audio and
