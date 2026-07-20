@@ -559,66 +559,120 @@
 #     cli.run_app(server)
 
 
-"""
-simple_greeter.py — Minimal LiveKit + Sarvam voice agent for audio quality testing.
-No DB, no tools, no multi-agent. Just greet and respond.
-"""
-import asyncio
-import os
+# """
+# simple_greeter.py — Minimal LiveKit + Sarvam voice agent for audio quality testing.
+# No DB, no tools, no multi-agent. Just greet and respond.
+# """
+# import asyncio
+# import os
+# from dotenv import load_dotenv
+# load_dotenv()
+
+# from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli
+# from livekit.plugins import sarvam
+# from livekit.plugins import google as lk_google
+# from livekit.agents.voice import room_io
+# from livekit.plugins import noise_cancellation
+
+# server = AgentServer()
+
+# class SimpleGreeter(Agent):
+#     def __init__(self):
+#         super().__init__(
+#             instructions="""
+#             You are Kavya, a friendly assistant for MuftyKare laundry service.
+#             Greet the caller warmly in Telugu and ask how you can help them.
+#             Keep responses short and natural.
+#             """
+#         )
+
+# # @server.rtc_session()
+# @server.rtc_session(agent_name="muftykare-agent")
+# async def entrypoint(ctx: JobContext):
+#     await ctx.connect()
+#     await ctx.wait_for_participant()
+
+#     session = AgentSession(
+#         stt=sarvam.STT(
+#             model="saaras:v3",
+#             language="te-IN",
+#             mode="transcribe",
+#             flush_signal=True,
+#         ),
+#         llm=lk_google.LLM(
+#             model="gemini-3.1-flash-lite",
+#         ),
+#         tts=sarvam.TTS(
+#             target_language_code="te-IN",
+#             model="bulbul:v3",
+#             speaker="kavya",
+#         ),
+#         vad=None,                    # Sarvam handles VAD internally
+#         turn_detection="stt",        # use Sarvam STT signals
+#         min_endpointing_delay=0.07,  # Sarvam's recommended value
+#     )
+
+#     await session.start(
+#         agent=SimpleGreeter(),
+#         room=ctx.room,
+#         room_input_options=room_io.RoomInputOptions(
+#             noise_cancellation=noise_cancellation.BVCTelephony(),
+#         ),
+#     )
+
+# if __name__ == "__main__":
+#     cli.run_app(server)
+
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    JobContext,
+    RunContext,
+    cli,
+    function_tool,
+    inference,
+)
 from dotenv import load_dotenv
 load_dotenv()
 
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli
-from livekit.plugins import sarvam
-from livekit.plugins import google as lk_google
-from livekit.agents.voice import room_io
-from livekit.plugins import noise_cancellation
+@function_tool
+async def lookup_weather(
+    context: RunContext,
+    location: str,
+):
+    """Used to look up weather information."""
+
+    return {"weather": "sunny", "temperature": 70}
+
 
 server = AgentServer()
 
-class SimpleGreeter(Agent):
-    def __init__(self):
-        super().__init__(
-            instructions="""
-            You are Kavya, a friendly assistant for MuftyKare laundry service.
-            Greet the caller warmly in Telugu and ask how you can help them.
-            Keep responses short and natural.
-            """
-        )
 
-# @server.rtc_session()
 @server.rtc_session(agent_name="muftykare-agent")
 async def entrypoint(ctx: JobContext):
-    await ctx.connect()
-    await ctx.wait_for_participant()
-
     session = AgentSession(
-        stt=sarvam.STT(
-            model="saaras:v3",
-            language="te-IN",
-            mode="transcribe",
-            flush_signal=True,
-        ),
-        llm=lk_google.LLM(
-            model="gemini-3.1-flash-lite",
-        ),
-        tts=sarvam.TTS(
-            target_language_code="te-IN",
-            model="bulbul:v3",
-            speaker="kavya",
-        ),
-        vad=None,                    # Sarvam handles VAD internally
-        turn_detection="stt",        # use Sarvam STT signals
-        min_endpointing_delay=0.07,  # Sarvam's recommended value
+        vad=inference.VAD(),
+        # any combination of STT, LLM, TTS, or realtime API can be used
+        # this example shows LiveKit Inference, a unified API to access different models via LiveKit Cloud
+        # to use model provider keys directly, replace with the following:
+        # from livekit.plugins import deepgram, openai, cartesia
+        # stt=deepgram.STT(model="nova-3"),
+        # llm=openai.LLM(model="gpt-4.1-mini"),
+        # tts=cartesia.TTS(model="sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"),
+        stt=inference.STT("deepgram/nova-3", language="multi"),
+        llm=inference.LLM("openai/gpt-4.1-mini"),
+        tts=inference.TTS("cartesia/sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"),
     )
 
-    await session.start(
-        agent=SimpleGreeter(),
-        room=ctx.room,
-        room_input_options=room_io.RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVCTelephony(),
-        ),
+    agent = Agent(
+        instructions="You are a friendly voice assistant built by LiveKit.",
+        tools=[lookup_weather],
     )
+
+    await session.start(agent=agent, room=ctx.room)
+    await session.generate_reply(instructions="greet the user and ask about their day")
+
 
 if __name__ == "__main__":
     cli.run_app(server)
