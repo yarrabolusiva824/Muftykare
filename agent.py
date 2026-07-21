@@ -460,6 +460,7 @@ async def entrypoint(ctx: JobContext) -> None:
             target_language_code=SARVAM_LANGUAGE,
             model=SARVAM_TTS_MODEL,
             speaker=SARVAM_TTS_SPEAKER,
+            output_audio_codec="mulaw",
         ),
     #     tts=sarvam.TTS(
     #     target_language_code="te-IN",
