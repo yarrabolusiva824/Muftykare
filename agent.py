@@ -475,7 +475,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # ),
 
         # Turn detection — LiveKit (Silero) VAD, loaded once per worker in prewarm()
-        # turn_detection="vad",
+        turn_detection="stt",
 
         # Silence timeout — fires user_state_changed after N seconds of silence
         # user_away_timeout=USER_AWAY_TIMEOUT_SECS,
