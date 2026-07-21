@@ -429,7 +429,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # ── 7. Build AgentSession ───────────────────────────────────────────────
     session = AgentSession[MuftyKareUserData](
         userdata=userdata,
-        vad=inference.VAD(),
+        # vad=inference.VAD(),
 
         # STT — Sarvam Saaras v3, Telugu primary
         # flush_signal=True is MANDATORY for Sarvam turn detection
@@ -443,7 +443,7 @@ async def entrypoint(ctx: JobContext) -> None:
         model="saaras:v3",
         language="te-IN",
         mode="transcribe",
-        flush_signal=False,       # ← disable Sarvam VAD signals
+        flush_signal=True,       # ← disable Sarvam VAD signals
     ),
 
         # LLM — GPT-4o, parallel_tool_calls=False for voice reliability
