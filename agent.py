@@ -429,7 +429,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # ── 7. Build AgentSession ───────────────────────────────────────────────
     session = AgentSession[MuftyKareUserData](
         userdata=userdata,
-        # vad=inference.VAD(),
+        vad=inference.VAD(),
 
         # STT — Sarvam Saaras v3, Telugu primary
         # flush_signal=True is MANDATORY for Sarvam turn detection
@@ -437,7 +437,7 @@ async def entrypoint(ctx: JobContext) -> None:
             model=SARVAM_STT_MODEL,
             language=SARVAM_LANGUAGE,
             mode="transcribe",
-            flush_signal=True,
+            # flush_signal=True,
         ),
     #     stt=sarvam.STT(
     #     model="saaras:v3",
@@ -475,7 +475,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # ),
 
         # Turn detection — LiveKit (Silero) VAD, loaded once per worker in prewarm()
-        turn_detection="stt",
+        turn_detection="vad",
 
         # Silence timeout — fires user_state_changed after N seconds of silence
         # user_away_timeout=USER_AWAY_TIMEOUT_SECS,
