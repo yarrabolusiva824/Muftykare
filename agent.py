@@ -42,6 +42,7 @@ from livekit.agents import (
     inference,
     cli,
 )
+from livekit.agents import WorkerOptions, cli
 from livekit.plugins import sarvam
 from livekit.plugins.sarvam import STT as SarvamSTT, TTS as SarvamTTS
 from livekit.plugins import openai as lk_openai
@@ -578,7 +579,14 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
-    cli.run_app(server)
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
+            num_idle_processes=1,
+            load_threshold=0.7,
+        )
+    )
 
 
 # from livekit.agents import (
