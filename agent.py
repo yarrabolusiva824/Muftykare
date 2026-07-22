@@ -249,12 +249,22 @@ def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = inference.VAD(model="silero")
 
 
+def get_vad_instance(ctx: JobContext):
+    """Return the pre-warmed VAD from worker userdata if available."""
+    proc_userdata = getattr(getattr(ctx, "proc", None), "userdata", None)
+    if proc_userdata and "vad" in proc_userdata:
+        return proc_userdata["vad"]
+
+    logger.warning("no prewarmed VAD found, creating fallback VAD")
+    return inference.VAD()
+
+
 # ── AgentServer ─────────────────────────────────────────────────────────────
 server = AgentServer()
 server.setup_fnc = prewarm
 
 
-@server.rtc_session(agent_name="muftykare-agent")
+@server.rtc_session(agent_name="muftykare-agent-dev")
 async def entrypoint(ctx: JobContext) -> None:
     """
     Entrypoint for every MuftyKare voice agent session.
@@ -429,7 +439,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # ── 7. Build AgentSession ───────────────────────────────────────────────
     session = AgentSession[MuftyKareUserData](
         userdata=userdata,
-        vad=inference.VAD(),
+        vad=get_vad_instance(ctx),
 
         # STT — Sarvam Saaras v3, Telugu primary
         # flush_signal=True is MANDATORY for Sarvam turn detection
