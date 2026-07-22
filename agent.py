@@ -264,7 +264,7 @@ server = AgentServer()
 server.setup_fnc = prewarm
 
 
-@server.rtc_session(agent_name="muftykare-agent-dev")
+@server.rtc_session(agent_name="muftykare-agent")
 async def entrypoint(ctx: JobContext) -> None:
     """
     Entrypoint for every MuftyKare voice agent session.
