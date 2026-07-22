@@ -581,6 +581,7 @@ async def entrypoint(ctx: JobContext) -> None:
 if __name__ == "__main__":
     cli.run_app(
         WorkerOptions(
+            agent_name="muftykare-agent",  # <-- Add this! It matches your previous setup
             entrypoint_fnc=entrypoint,
             prewarm_fnc=prewarm,
             num_idle_processes=1,
