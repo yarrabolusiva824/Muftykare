@@ -42,7 +42,7 @@ from livekit.agents import AgentSession, BuiltinAudioClip, inference
 from livekit.agents.voice import io as agent_io, room_io
 from livekit.api import AccessToken, VideoGrants
 from livekit.plugins import sarvam
-from livekit.plugins import openai as lk_openai
+# from livekit.plugins import openai as lk_openai
 from livekit.plugins import noise_cancellation
 
 from logger import get_logger
