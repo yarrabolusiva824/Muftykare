@@ -565,9 +565,10 @@ async def entrypoint(ctx: JobContext) -> None:
             timings.log_summary(logger, ctx.room.name)
 
     timings.session_start = time.perf_counter()
-    await session.start(agent=starting_agent, room=ctx.room, room_input_options=room_io.RoomInputOptions(
-        noise_cancellation=noise_cancellation.BVCTelephony(),
-    ),)
+    await session.start(agent=starting_agent, room=ctx.room)
+    # await session.start(agent=starting_agent, room=ctx.room, room_input_options=room_io.RoomInputOptions(
+    #     noise_cancellation=noise_cancellation.BVCTelephony(),
+    # ),)
     session.output.set_audio_enabled(True)
     # await warm_ambience_cache(BuiltinAudioClip.OFFICE_AMBIENCE.path())
     await background_audio.start(room=ctx.room, agent_session=session)
