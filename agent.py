@@ -13,6 +13,11 @@ Agent selection (dev only — set in .env):
     TEST_AGENT=complaint
     TEST_AGENT=outbound
 """
+import os
+# Force ONNX and OpenMP to use exactly 1 thread for VAD inference
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["ONNXRUNTIME_INTEROP_NUM_THREADS"] = "1"
+os.environ["ONNXRUNTIME_INTRAOP_NUM_THREADS"] = "1"
 
 # ── Logging FIRST — before any imports that might log ──────────────────────
 from logger import setup_logging, get_logger
