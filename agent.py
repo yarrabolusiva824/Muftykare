@@ -45,7 +45,7 @@ from livekit.agents import (
 from livekit.agents import WorkerOptions, cli
 from livekit.plugins import sarvam
 from livekit.plugins.sarvam import STT as SarvamSTT, TTS as SarvamTTS
-from livekit.plugins import openai as lk_openai
+# from livekit.plugins import openai as lk_openai
 from livekit.plugins import noise_cancellation
 from livekit.agents.voice import room_io
 # ── MuftyKare imports ───────────────────────────────────────────────────────
